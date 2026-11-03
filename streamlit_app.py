@@ -4,7 +4,7 @@ import re
 from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------------------------------------------------------
-# CONFIGURAÇÃO DA PÁGINA
+# PAGE CONFIGURATION
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Park Music Academy Management Portal",
@@ -15,7 +15,7 @@ st.set_page_config(
 st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 
 # -----------------------------------------------------------------------------
-# 1. CAMADA DE DADOS
+# 1. DATA LAYER (Decoupled & Prepared for Standalone Migration)
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -35,7 +35,7 @@ def load_data():
             df[col] = df[col].astype(str).str.strip()
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar a base de dados: {e}")
+        st.error(f"Error loading master database: {e}")
         return pd.DataFrame()
 
 df = load_data()
@@ -53,7 +53,7 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 2. AUXILIARES E CATEGORIZAÇÃO
+# 2. HELPER FUNCTIONS & CATEGORIZATION
 # -----------------------------------------------------------------------------
 def get_grade_category(grade_str):
     if not grade_str:
@@ -83,7 +83,7 @@ def calculate_unique_students(data):
     return data["Student"].nunique()
 
 # -----------------------------------------------------------------------------
-# 3. AUTENTICAÇÃO E BARRA LATERAL
+# 3. AUTHENTICATION & ROLE-BASED ACCESS (Sidebar)
 # -----------------------------------------------------------------------------
 st.sidebar.title("🔐 Portal Login")
 
@@ -101,7 +101,7 @@ st.sidebar.markdown("---")
 if user_role == "Academy Coordinator":
     st.header("🏛️ Academy Coordinator Portal")
 
-    # Executive Dashboard
+    # Executive Overview Dashboard
     st.subheader("📊 EXECUTIVE DASHBOARD")
     t1, t2, t3, t4 = st.columns(4)
     t1.metric("Total Lessons", len(valid_df))
@@ -111,7 +111,7 @@ if user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    # Campus Breakdown
+    # Campus Breakdown Cards
     st.subheader("📍 Campus Enrollments & Unique Students Breakdown")
     c_alfragide, c_pde, c_restelo = st.columns(3)
 
@@ -175,7 +175,6 @@ if user_role == "Academy Coordinator":
             if grade_filter != "All Grades":
                 filtered_df = filtered_df[filtered_df["Grade"].apply(get_grade_category) == grade_filter]
 
-            # Apresentação formatada por blocos de professores e dias
             if not filtered_df.empty:
                 teachers_in_view = filtered_df["Teacher"].unique()
                 for teacher in teachers_in_view:
@@ -330,7 +329,7 @@ elif user_role == "School Coordinator":
                     st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 6. TIER 3: ACADEMY TEACHER PORTAL (Formatação idêntica ao modelo de Excel)
+# 6. TIER 3: ACADEMY TEACHER PORTAL (Cleaned Up Schedule View)
 # -----------------------------------------------------------------------------
 elif user_role == "Academy Teacher":
     st.header("👨‍🏫 Teacher Portal")
@@ -365,7 +364,7 @@ elif user_role == "Academy Teacher":
 
                 t_tab1, t_tab2, t_tab3 = st.tabs(["📅 My Personal Schedule", "🏫 My Campus Schedule", "📞 My Students' Parent Contacts"])
 
-                # TAB 1: Horário Pessoal Formatado por Dia e Campus (Estilo Excel)
+                # TAB 1: Clean Timetable (Removed Parent Email & Parent Phone to prevent duplication)
                 with t_tab1:
                     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                     for day in days:
@@ -375,17 +374,16 @@ elif user_role == "Academy Teacher":
                             for campus in campuses:
                                 c_df = day_df[day_df["Campus"] == campus].copy()
                                 
-                                # Bloco Visual Estilo Excel (ex: WEDNESDAY - ALFRAGIDE)
                                 st.markdown(f"### 📘 {day.upper()} — {campus.upper()}")
                                 
                                 c_df["Time"] = c_df["Start Time"] + " - " + c_df["End Time"]
-                                # Colunas com Parents Email seguido de Parents Phone
-                                disp_df = c_df[["Time", "Student", "Grade", "Instrument", "Room", "Parent Email", "Parent Phone"]].copy()
-                                disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Parents Email", "Parents Phone"]
+                                # Streamlined columns focusing purely on lesson details
+                                disp_df = c_df[["Time", "Student", "Grade", "Instrument", "Room"]].copy()
+                                disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room"]
                                 
                                 st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
-                # TAB 2: Horário Geral do Campus
+                # TAB 2: Campus Overview Schedule
                 with t_tab2:
                     st.subheader(f"General Schedule — {teacher_campus} Campus")
                     campus_df = df[df["Campus"] == teacher_campus]
@@ -398,7 +396,7 @@ elif user_role == "Academy Teacher":
                             disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Teacher"]
                             st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
-                # TAB 3: Contactos dos Pais dos Alunos do Professor
+                # TAB 3: Dedicated Parent Contact Directory
                 with t_tab3:
                     st.subheader("Assigned Student Parent Contacts")
                     cont_df = teacher_df[["Student", "Grade", "Instrument", "Parent Name", "Parent Email", "Parent Phone"]].copy()
