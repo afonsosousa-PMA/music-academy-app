@@ -86,4 +86,25 @@ elif menu_choice == "➕ Add New Booking / Student":
                     check_conflict = df[
                         (df["Room"] == room) & 
                         (df["Day"] == day_of_week) & 
-                        (df["Time"] ==
+                        (df["Time"] == str(time_slot))
+                    ]
+                    if not check_conflict.empty:
+                        conflict = True
+
+                if conflict:
+                    st.error(f"⚠️ Schedule Conflict Alert! {room} is already booked on {day_of_week} at {time_slot}.")
+                else:
+                    st.success(f"✅ Record for {student_name} successfully validated!")
+                    st.info("Note: To write changes directly back to Google Sheets from the app, we will set up direct write access in the next step.")
+
+# OPTION 3: Parent Directory
+elif menu_choice == "📞 Parent Contacts":
+    st.header("📞 Parent & Guardian Contact Directory")
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
+
+# OPTION 4: Studio Availability
+elif menu_choice == "🚪 Studio Availability":
+    st.header("🚪 Studio & Room Assignments")
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
