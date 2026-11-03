@@ -1,29 +1,30 @@
 import streamlit as st
 import pandas as pd
 
-# Configuração da página do navegador
+# Browser tab configuration
 st.set_page_config(
     page_title="Music Academy Portal",
     page_icon="🎵",
     layout="wide"
 )
 
+# App Header
 st.title("🎵 Music Academy Management Portal")
-st.write("Painel de Gestão e Controlo da Academia de Música.")
+st.write("Welcome to your custom administration dashboard.")
 
-# Menu de Navegação na Barra Lateral
-st.sidebar.header("Navegação")
+# Sidebar Navigation
+st.sidebar.header("Navigation")
 menu_choice = st.sidebar.radio(
-    "Selecione a Opção",
+    "Select View",
     [
-        "📊 Visualizar Base de Dados",
-        "➕ Adicionar Novo Agendamento / Aluno",
-        "📞 Contactos dos Pais",
-        "🚪 Ocupação de Salas"
+        "📊 Master Database View",
+        "➕ Add New Booking / Student",
+        "📞 Parent Contacts",
+        "🚪 Studio Availability"
     ]
 )
 
-# Função para carregar os dados do Google Sheets
+# Function to load Google Sheets data
 def load_data():
     try:
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -34,77 +35,55 @@ def load_data():
             csv_url = sheet_url
         return pd.read_csv(csv_url)
     except Exception as e:
-        st.error(f"Erro ao carregar a base de dados: {e}")
+        st.error(f"Error loading database: {e}")
         return pd.DataFrame()
 
-# Carrega os dados atuais
+# Load current data
 df = load_data()
 
-# OPÇÃO 1: Visualização dos Dados Globais
-if menu_choice == "📊 Visualizar Base de Dados":
-    st.header("📋 Dados Globais (DATABASE)")
+# OPTION 1: Master Database View
+if menu_choice == "📊 Master Database View":
+    st.header("📋 Master Data (DATABASE)")
     if not df.empty:
-        # Filtro de pesquisa rápido
-        search_query = st.text_input("🔍 Pesquisar por Aluno, Professor ou Instrumento:")
+        search_query = st.text_input("🔍 Search by Student, Teacher, or Instrument:")
         if search_query:
             filtered_df = df[df.astype(str).apply(lambda row: row.str.contains(search_query, case=False).any(), axis=1)]
             st.dataframe(filtered_df, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True)
     else:
-        st.info("Nenhum dado encontrado ou a carregar...")
+        st.info("No data found or loading...")
 
-# OPÇÃO 2: Formulário para Inserir Novos Dados
-elif menu_choice == "➕ Adicionar Novo Agendamento / Aluno":
-    st.header("📝 Registar Novo Aluno & Aula")
-    st.write("Preencha o formulário abaixo para adicionar uma nova inscrição à base de dados.")
+# OPTION 2: New Student / Lesson Form
+elif menu_choice == "➕ Add New Booking / Student":
+    st.header("📝 Register New Student & Lesson")
+    st.write("Fill out the form below to add a new registration to your database.")
 
     with st.form("new_student_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
         with col1:
-            student_name = st.text_input("Nome do Aluno *")
-            instrument = st.selectbox("Instrumento", ["Piano", "Guitarra", "Violino", "Canto", "Bateria", "Flauta", "Outro"])
-            teacher = st.text_input("Nome do Professor *")
-            room = st.selectbox("Sala / Estúdio", ["Sala 1", "Sala 2", "Sala 3", "Estúdio A", "Estúdio B"])
+            student_name = st.text_input("Student Name *")
+            instrument = st.selectbox("Instrument", ["Piano", "Guitar", "Violin", "Vocals", "Drums", "Flute", "Other"])
+            teacher = st.text_input("Teacher Name *")
+            room = st.selectbox("Room / Studio", ["Room 1", "Room 2", "Room 3", "Studio A", "Studio B"])
 
         with col2:
-            day_of_week = st.selectbox("Dia da Semana", ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"])
-            time_slot = st.time_input("Horário da Aula")
-            parent_name = st.text_input("Nome do Encarregado de Educação")
-            parent_contact = st.text_input("Contacto Telefónico / Email")
+            day_of_week = st.selectbox("Day of Week", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+            time_slot = st.time_input("Lesson Time")
+            parent_name = st.text_input("Parent / Guardian Name")
+            parent_contact = st.text_input("Contact Phone / Email")
 
-        submitted = st.form_submit_button("💾 Guardar Registo")
+        submitted = st.form_submit_button("💾 Save Record")
 
         if submitted:
             if not student_name or not teacher:
-                st.warning("Por favor, preencha pelo menos o Nome do Aluno e o Professor.")
+                st.warning("Please enter at least the Student Name and Teacher Name.")
             else:
-                # Verificação simples de duplo agendamento de sala
+                # Double-booking prevention check
                 conflict = False
-                if not df.empty and "Sala" in df.columns and "Dia" in df.columns and "Hora" in df.columns:
+                if not df.empty and "Room" in df.columns and "Day" in df.columns and "Time" in df.columns:
                     check_conflict = df[
-                        (df["Sala"] == room) & 
-                        (df["Dia"] == day_of_week) & 
-                        (df["Hora"] == str(time_slot))
-                    ]
-                    if not check_conflict.empty:
-                        conflict = True
-
-                if conflict:
-                    st.error(f"⚠️ Alerta de Sobreposição! A {room} já se encontra ocupada na {day_of_week} às {time_slot}.")
-                else:
-                    st.success(f"✅ Registo de {student_name} validado com sucesso!")
-                    st.info("Nota: Para atualizar diretamente a folha de cálculo a partir do browser, ativaremos a escrita direta no próximo passo.")
-
-# OPÇÃO 3: Contactos dos Enc. Educação
-elif menu_choice == "📞 Contactos dos Pais":
-    st.header("📞 Diretório de Contactos dos Encarregados de Educação")
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
-
-# OPÇÃO 4: Ocupação de Salas
-elif menu_choice == "🚪 Ocupação de Salas":
-    st.header("🚪 Estado e Ocupação das Salas")
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
+                        (df["Room"] == room) & 
+                        (df["Day"] == day_of_week) & 
+                        (df["Time"] ==
