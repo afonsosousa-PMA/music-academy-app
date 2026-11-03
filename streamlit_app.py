@@ -95,7 +95,6 @@ INSTRUMENT_OPTIONS = {
     "PdE": ["Guitar", "Piano", "Violin", "Music Initiation", "Music Atelier"]
 }
 
-# Mapa de emails de professores existente
 teacher_email_map = {}
 if not df.empty and "Teacher" in df.columns and "Teacher Email" in df.columns:
     for _, r in df.iterrows():
@@ -277,7 +276,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    # NOVO MENU ORGANIZADO CONFORME PEDIDO
+    # MENU ORGANIZADO
     tab1, tab2, tab3, tab4 = st.tabs([
         "📅 General Schedule", 
         "📋 Student Profile",
@@ -285,11 +284,11 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
         "✏️ Edit / Delete Record"
     ])
 
-    # TAB 1: GENERAL SCHEDULE (VISÃO SEMANAL LADO A LADO 2ª A 6ª FEIRA ESTILO EXCEL)
+    # TAB 1: GENERAL SCHEDULE (VISÃO COMPLETA ESTILO EXCEL - LARGURA TOTAL SEM CORTAR NOMES)
     with tab1:
-        st.subheader("Master Schedule Overview (Weekly Grid View)")
+        st.subheader("Master Schedule Overview")
         if not df.empty:
-            f_col1, f_col2, f_col3 = st.columns(3)
+            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
             with f_col1:
                 campus_opts = ["All Campuses"] + sorted([c for c in df["Campus"].unique() if c])
                 campus_filter = st.selectbox("Campus Filter:", campus_opts)
@@ -297,6 +296,9 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 teacher_opts = ["All Teachers"] + sorted([t for t in df["Teacher"].unique() if t])
                 teacher_filter = st.selectbox("Teacher Filter:", teacher_opts)
             with f_col3:
+                day_opts = ["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                day_filter = st.selectbox("Day Filter:", day_opts)
+            with f_col4:
                 grade_opts = ["All Grades", "Early Learning", "Junior School", "Senior School"]
                 grade_filter = st.selectbox("Grade Filter:", grade_opts)
 
@@ -305,6 +307,8 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 filtered_df = filtered_df[filtered_df["Campus"] == campus_filter]
             if teacher_filter != "All Teachers":
                 filtered_df = filtered_df[filtered_df["Teacher"] == teacher_filter]
+            if day_filter != "All Days":
+                filtered_df = filtered_df[filtered_df["Day"] == day_filter]
             if grade_filter != "All Grades":
                 filtered_df = filtered_df[filtered_df["Grade"].apply(get_grade_category) == grade_filter]
 
@@ -318,38 +322,47 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 )
 
                 teachers_in_view = filtered_df["Teacher"].unique()
+                days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                
                 for teacher in teachers_in_view:
                     if not teacher:
                         continue
+                    
                     st.markdown(f"## 👨‍🏫 {teacher.upper()}")
                     t_df = filtered_df[filtered_df["Teacher"] == teacher]
                     
-                    # Layout em colunas de 2ª a 6ª Feira lado a lado
-                    col_mon, col_tue, col_wed, col_thu, col_fri = st.columns(5)
-                    
-                    days_map = [
-                        ("Monday", col_mon), ("Tuesday", col_tue), 
-                        ("Wednesday", col_wed), ("Thursday", col_thu), ("Friday", col_fri)
-                    ]
-                    
-                    for day_name, col_obj in days_map:
-                        with col_obj:
-                            st.markdown(f"##### 📅 {day_name.upper()}")
-                            d_df = t_df[t_df["Day"] == day_name].copy()
-                            if not d_df.empty:
-                                d_df["Time"] = d_df.apply(format_time_range, axis=1)
-                                disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Room"]].copy()
-                                disp_df.columns = ["Time", "Student", "Class", "Inst.", "Room"]
-                                st.dataframe(disp_df, use_container_width=True, hide_index=True)
-                            else:
-                                st.caption("No lessons")
+                    # Blocos por dia em largura completa para mostrar todas as colunas sem cortar nomes
+                    for day_name in days:
+                        d_df = t_df[t_df["Day"] == day_name].copy()
+                        if not d_df.empty:
+                            st.markdown(f"#### 📅 {day_name.upper()}")
+                            d_df["Time"] = d_df.apply(format_time_range, axis=1)
+                            disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Inst. Year", "Level", "Room", "Campus"]].copy()
+                            disp_df.columns = ["Time", "Student", "Class", "Instrument", "Inst. Year", "Level", "Room", "Campus"]
+                            
+                            # Configuração explícita de largura de colunas para impedir nomes cortados
+                            st.dataframe(
+                                disp_df, 
+                                use_container_width=True, 
+                                hide_index=True,
+                                column_config={
+                                    "Time": st.column_config.TextColumn("Time", width="medium"),
+                                    "Student": st.column_config.TextColumn("Student", width="large"),
+                                    "Class": st.column_config.TextColumn("Class", width="small"),
+                                    "Instrument": st.column_config.TextColumn("Instrument", width="medium"),
+                                    "Inst. Year": st.column_config.TextColumn("Inst. Year", width="small"),
+                                    "Level": st.column_config.TextColumn("Level", width="small"),
+                                    "Room": st.column_config.TextColumn("Room", width="small"),
+                                    "Campus": st.column_config.TextColumn("Campus", width="medium"),
+                                }
+                            )
                     st.markdown("---")
             else:
                 st.info("No lessons found matching the selected filters.")
         else:
             st.info("No schedule data loaded.")
 
-    # TAB 2: STUDENT PROFILE (FICHA COMPLETA DO ALUNO + CONTACTOS DOS PAIS)
+    # TAB 2: STUDENT PROFILE
     with tab2:
         st.subheader("📋 Student Profile & Contact Details")
         if not df.empty and "Student" in df.columns:
@@ -382,7 +395,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 profile_disp.columns = ["Day", "Time", "Instrument", "Year", "Teacher", "Room", "Campus", "Notes"]
                 st.dataframe(profile_disp, use_container_width=True, hide_index=True)
 
-    # TAB 3: ADD NEW RECORD (DURAÇÕES REGRADAS E EMAIL DO PROFESSOR DEDICADO)
+    # TAB 3: ADD NEW RECORD
     with tab3:
         st.subheader("➕ Add New Schedule / Student Record")
         
@@ -394,7 +407,6 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
         with sc2:
             new_teacher = st.selectbox("Teacher Name *", existing_teachers if existing_teachers else ["Select Teacher"], key="add_teacher_select")
 
-        # Gestão de emails de professores (Permite introduzir novo se não existir)
         auto_teacher_email = teacher_email_map.get(new_teacher, f"{new_teacher.lower().replace(' ', '.')}@park-is.com" if new_teacher else "")
 
         available_rooms = ROOM_OPTIONS.get(new_campus, ROOM_OPTIONS["Other"])
@@ -420,7 +432,6 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
             with c3:
                 new_instrument = st.selectbox("Instrument *", available_instruments)
                 
-                # Regras Automáticas de Duração de Aula
                 if new_instrument in ["Music Initiation", "Music Atelier"]:
                     duration_options = [45]
                 elif new_campus in ["PdE", "Restelo"]:
@@ -463,7 +474,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                         except Exception as ex:
                             st.error(f"Failed to update data source: {ex}")
 
-    # TAB 4: EDIT / DELETE RECORD (UNIFICADO E COMPACTO)
+    # TAB 4: EDIT / DELETE RECORD
     with tab4:
         st.subheader("✏️ Edit or 🗑️ Delete Existing Record")
         if not df.empty and "Student" in df.columns:
