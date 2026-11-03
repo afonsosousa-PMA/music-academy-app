@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 
 # -----------------------------------------------------------------------------
-# 1. DATA LAYER (Decoupled & Prepared for Standalone Migration)
+# 1. DATA LAYER (Standalone Ready)
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -60,10 +60,7 @@ valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.co
 # 2. STANDALONE METRIC CALCULATIONS
 # -----------------------------------------------------------------------------
 def calculate_enrollments(data):
-    """
-    Calculates enrollments by grouping (Student + Campus + Instrument).
-    Automatically counts 30+30 split lessons as 1 enrollment.
-    """
+    """Calculates enrollments by grouping (Student + Campus + Instrument)."""
     if data.empty:
         return 0
     if "Instrument" in data.columns and "Campus" in data.columns:
@@ -71,7 +68,7 @@ def calculate_enrollments(data):
     return len(data)
 
 def calculate_unique_students(data):
-    """Calculates unique students (students with multiple instruments count as 1)."""
+    """Calculates unique students (students in multiple instruments count as 1)."""
     if data.empty or "Student" not in data.columns:
         return 0
     return data["Student"].nunique()
@@ -149,24 +146,48 @@ if user_role == "Academy Coordinator":
         "✏️ Edit / Update Existing Records"
     ])
 
-    # TAB 1: General Schedule View
+    # TAB 1: General Schedule View with 4 Filters (Matching Google Sheet)
     with tab1:
         st.subheader("Master Schedule Overview")
         if not df.empty:
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                campus_list = ["All Campuses"] + sorted([c for c in df["Campus"].unique() if c]) if "Campus" in df.columns else ["All Campuses"]
-                campus_filter = st.selectbox("Filter by Campus", campus_list)
-            with col_f2:
-                day_filter = st.selectbox("Filter by Weekday", ["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+            # 4-Column Layout for Campus, Teacher, Day, and Grade Filters
+            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
 
+            with f_col1:
+                campus_opts = ["All Campuses"] + sorted([c for c in df["Campus"].unique() if c])
+                campus_filter = st.selectbox("Campus Filter:", campus_opts)
+
+            with f_col2:
+                teacher_opts = ["All Teachers"] + sorted([t for t in df["Teacher"].unique() if t])
+                teacher_filter = st.selectbox("Teacher Filter:", teacher_opts)
+
+            with f_col3:
+                day_opts = ["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                day_filter = st.selectbox("Day Filter:", day_opts)
+
+            with f_col4:
+                grade_opts = ["All Grades"] + sorted([g for g in df["Grade"].unique() if g])
+                grade_filter = st.selectbox("Grade Filter:", grade_opts)
+
+            # Apply Dynamic Filtering
             filtered_df = df.copy()
-            if campus_filter != "All Campuses" and "Campus" in filtered_df.columns:
+
+            if campus_filter != "All Campuses":
                 filtered_df = filtered_df[filtered_df["Campus"] == campus_filter]
-            if day_filter != "All Days" and "Day" in filtered_df.columns:
+
+            if teacher_filter != "All Teachers":
+                filtered_df = filtered_df[filtered_df["Teacher"] == teacher_filter]
+
+            if day_filter != "All Days":
                 filtered_df = filtered_df[filtered_df["Day"] == day_filter]
 
+            if grade_filter != "All Grades":
+                filtered_df = filtered_df[filtered_df["Grade"] == grade_filter]
+
+            # Display Filtered Results
             st.dataframe(filtered_df, use_container_width=True)
+        else:
+            st.info("No schedule data loaded.")
 
     # TAB 2: Parent Contacts
     with tab2:
