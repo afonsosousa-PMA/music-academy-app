@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 
 # -----------------------------------------------------------------------------
-# 1. DATA LAYER (Prepared for Native Database Migration)
+# 1. DATA LAYER (Decoupled & Prepared for Standalone Migration)
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -230,4 +230,105 @@ if user_role == "Academy Coordinator":
         if not df.empty and "Student" in df.columns:
             student_list = [s for s in df["Student"].unique() if s]
             if student_list:
-                selected_student = st.selectbox("Select Student
+                selected_student = st.selectbox("Select Student to Edit", student_list)
+                student_rows = df[df["Student"] == selected_student]
+                if not student_rows.empty:
+                    idx = student_rows.index[0]
+                    row_data = df.loc[idx]
+
+                    with st.form("edit_record_form"):
+                        e1, e2 = st.columns(2)
+                        with e1:
+                            edit_campus = st.text_input("Campus", value=str(row_data.get("Campus", "")))
+                            edit_teacher = st.text_input("Teacher", value=str(row_data.get("Teacher", "")))
+                            edit_day = st.text_input("Day", value=str(row_data.get("Day", "")))
+                            edit_start = st.text_input("Start Time", value=str(row_data.get("Start Time", "")))
+                            edit_end = st.text_input("End Time", value=str(row_data.get("End Time", "")))
+                            edit_room = st.text_input("Room", value=str(row_data.get("Room", "")))
+
+                        with e2:
+                            edit_instrument = st.text_input("Instrument", value=str(row_data.get("Instrument", "")))
+                            edit_grade = st.text_input("Grade", value=str(row_data.get("Grade", "")))
+                            edit_notes = st.text_input("Notes", value=str(row_data.get("Notes", "")))
+                            edit_parent_name = st.text_input("Parent Name", value=str(row_data.get("Parent Name", "")))
+                            edit_parent_phone = st.text_input("Parent Phone", value=str(row_data.get("Parent Phone", "")))
+                            edit_parent_email = st.text_input("Parent Email", value=str(row_data.get("Parent Email", "")))
+
+                        submit_edit = st.form_submit_button("🔄 Update Record")
+
+                        if submit_edit:
+                            df.at[idx, "Campus"] = edit_campus
+                            df.at[idx, "Teacher"] = edit_teacher
+                            df.at[idx, "Day"] = edit_day
+                            df.at[idx, "Start Time"] = edit_start
+                            df.at[idx, "End Time"] = edit_end
+                            df.at[idx, "Room"] = edit_room
+                            df.at[idx, "Instrument"] = edit_instrument
+                            df.at[idx, "Grade"] = edit_grade
+                            df.at[idx, "Notes"] = edit_notes
+                            df.at[idx, "Parent Name"] = edit_parent_name
+                            df.at[idx, "Parent Phone"] = edit_parent_phone
+                            df.at[idx, "Parent Email"] = edit_parent_email
+
+                            try:
+                                conn.update(worksheet="DATABASE", data=df)
+                                st.success(f"✅ Record for {selected_student} updated!")
+                                st.cache_data.clear()
+                            except Exception as ex:
+                                st.error(f"Failed to update data source: {ex}")
+
+# -----------------------------------------------------------------------------
+# 5. TIER 2: SCHOOL COORDINATOR PORTAL
+# -----------------------------------------------------------------------------
+elif user_role == "School Coordinator":
+    st.header("🏫 School Coordinator Portal")
+    if not df.empty and "Campus" in df.columns:
+        campus_options = sorted([c for c in df["Campus"].unique() if c])
+        if campus_options:
+            selected_campus = st.selectbox("Select Your Campus", campus_options)
+            campus_df = df[df["Campus"] == selected_campus]
+
+            st.subheader(f"General Schedule — {selected_campus} Campus")
+            disp_cols = [c for c in ["Day", "Start Time", "End Time", "Room", "Student", "Grade", "Instrument", "Teacher"] if c in campus_df.columns]
+            st.dataframe(campus_df[disp_cols], use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# 6. TIER 3: ACADEMY TEACHER PORTAL
+# -----------------------------------------------------------------------------
+elif user_role == "Academy Teacher":
+    st.header("👨‍🏫 Teacher Portal")
+
+    if not user_email:
+        st.info("Please enter your registered school email address in the sidebar to load your personalized schedule.")
+    else:
+        if not df.empty and "Teacher" in df.columns:
+            teacher_df = df[
+                (df["Teacher Email"].str.lower() == user_email) | 
+                (df["Teacher"].str.lower().apply(lambda x: x.replace(" ", ".")) in user_email)
+            ]
+
+            if teacher_df.empty:
+                st.warning(f"No records found matching email '{user_email}'. Please verify your login email or contact your Academy Coordinator.")
+            else:
+                teacher_name = teacher_df["Teacher"].iloc[0]
+                teacher_campus = teacher_df["Campus"].iloc[0] if "Campus" in teacher_df.columns else "Main"
+
+                st.success(f"Welcome back, **{teacher_name}**!")
+
+                t_tab1, t_tab2, t_tab3 = st.tabs(["📅 My Personal Schedule", "🏫 My Campus Schedule", "📞 My Students' Parent Contacts"])
+
+                with t_tab1:
+                    st.subheader(f"Personal Timetable — {teacher_name}")
+                    p_cols = [c for c in ["Day", "Start Time", "End Time", "Campus", "Room", "Student", "Grade", "Instrument"] if c in teacher_df.columns]
+                    st.dataframe(teacher_df[p_cols], use_container_width=True)
+
+                with t_tab2:
+                    st.subheader(f"Campus Schedule — {teacher_campus}")
+                    campus_df = df[df["Campus"] == teacher_campus]
+                    c_cols = [c for c in ["Day", "Start Time", "End Time", "Room", "Student", "Instrument", "Teacher"] if c in campus_df.columns]
+                    st.dataframe(campus_df[c_cols], use_container_width=True)
+
+                with t_tab3:
+                    st.subheader("Assigned Student Parent Contacts")
+                    cont_cols = [c for c in ["Student", "Grade", "Instrument", "Parent Name", "Parent Phone", "Parent Email"] if c in teacher_df.columns]
+                    st.dataframe(teacher_df[cont_cols], use_container_width=True)
