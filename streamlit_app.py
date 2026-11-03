@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------------------------------------------------------
@@ -14,15 +15,14 @@ st.set_page_config(
 st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 
 # -----------------------------------------------------------------------------
-# 1. DATA LAYER (Standalone Ready)
+# 1. DATA LAYER (Decoupled & Prepared for Standalone Migration)
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=5)
 def load_data():
     """
-    Loads raw data from the master DATABASE tab.
-    Cleanly formatted to decouple UI logic from Google Sheets.
+    Carrega dados brutos da aba principal DATABASE.
     """
     try:
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -38,12 +38,12 @@ def load_data():
             df[col] = df[col].astype(str).str.strip()
         return df
     except Exception as e:
-        st.error(f"Error loading master database: {e}")
+        st.error(f"Erro ao carregar a base de dados: {e}")
         return pd.DataFrame()
 
 df = load_data()
 
-# Ensure standard schema columns exist
+# Garantir estrutura padrão de colunas
 expected_cols = [
     "Campus", "Teacher", "Day", "Start Time", "End Time", 
     "Student", "Grade", "Instrument", "Inst. Year", "Level", 
@@ -57,10 +57,39 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 2. STANDALONE METRIC CALCULATIONS
+# 2. HELPER: LÓGICA DE AGRUPAMENTO DE GRADES
+# -----------------------------------------------------------------------------
+def get_grade_category(grade_str):
+    """
+    Mapeia o valor individual da coluna Grade para uma das 3 categorias principais.
+    """
+    if not grade_str:
+        return "Other"
+    
+    val = str(grade_str).upper().strip()
+    
+    # 1. Early Learning Check (3y, 4y, 5y, Early Learning)
+    if any(k in val for k in ["EARLY", "3Y", "4Y", "5Y"]):
+        return "Early Learning"
+    
+    # Extrair números da Grade (ex: "3B" -> 3, "10A" -> 10)
+    numbers = re.findall(r'\d+', val)
+    if numbers:
+        grade_num = int(numbers[0])
+        # 2. Junior School (Grades 1 a 5)
+        if 1 <= grade_num <= 5:
+            return "Junior School"
+        # 3. Senior School (Grades 6 a 12)
+        elif 6 <= grade_num <= 12:
+            return "Senior School"
+            
+    return "Other"
+
+# -----------------------------------------------------------------------------
+# 3. STANDALONE METRIC CALCULATIONS
 # -----------------------------------------------------------------------------
 def calculate_enrollments(data):
-    """Calculates enrollments by grouping (Student + Campus + Instrument)."""
+    """Calcula inscrições agrupando por Aluno + Campus + Instrumento."""
     if data.empty:
         return 0
     if "Instrument" in data.columns and "Campus" in data.columns:
@@ -68,13 +97,13 @@ def calculate_enrollments(data):
     return len(data)
 
 def calculate_unique_students(data):
-    """Calculates unique students (students in multiple instruments count as 1)."""
+    """Calcula alunos únicos (alunos com múltiplos instrumentos contam como 1)."""
     if data.empty or "Student" not in data.columns:
         return 0
     return data["Student"].nunique()
 
 # -----------------------------------------------------------------------------
-# 3. AUTHENTICATION & ROLE-BASED ACCESS (Sidebar)
+# 4. AUTHENTICATION & ROLE-BASED ACCESS (Sidebar)
 # -----------------------------------------------------------------------------
 st.sidebar.title("🔐 Portal Login")
 
@@ -87,7 +116,7 @@ user_email = st.sidebar.text_input("Enter School Email", value="").strip().lower
 st.sidebar.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 4. TIER 1: ACADEMY COORDINATOR (Full Management Access)
+# 5. TIER 1: ACADEMY COORDINATOR (Full Management Access)
 # -----------------------------------------------------------------------------
 if user_role == "Academy Coordinator":
     st.header("🏛️ Academy Coordinator Portal")
@@ -146,11 +175,10 @@ if user_role == "Academy Coordinator":
         "✏️ Edit / Update Existing Records"
     ])
 
-    # TAB 1: General Schedule View with 4 Filters (Matching Google Sheet)
+    # TAB 1: General Schedule View com Filtros Personalizados
     with tab1:
         st.subheader("Master Schedule Overview")
         if not df.empty:
-            # 4-Column Layout for Campus, Teacher, Day, and Grade Filters
             f_col1, f_col2, f_col3, f_col4 = st.columns(4)
 
             with f_col1:
@@ -166,10 +194,11 @@ if user_role == "Academy Coordinator":
                 day_filter = st.selectbox("Day Filter:", day_opts)
 
             with f_col4:
-                grade_opts = ["All Grades"] + sorted([g for g in df["Grade"].unique() if g])
+                # Apenas as 3 categorias solicitadas + opção All
+                grade_opts = ["All Grades", "Early Learning", "Junior School", "Senior School"]
                 grade_filter = st.selectbox("Grade Filter:", grade_opts)
 
-            # Apply Dynamic Filtering
+            # Aplicação dinâmica dos filtros
             filtered_df = df.copy()
 
             if campus_filter != "All Campuses":
@@ -182,12 +211,13 @@ if user_role == "Academy Coordinator":
                 filtered_df = filtered_df[filtered_df["Day"] == day_filter]
 
             if grade_filter != "All Grades":
-                filtered_df = filtered_df[filtered_df["Grade"] == grade_filter]
+                filtered_df = filtered_df[
+                    filtered_df["Grade"].apply(get_grade_category) == grade_filter
+                ]
 
-            # Display Filtered Results
             st.dataframe(filtered_df, use_container_width=True)
         else:
-            st.info("No schedule data loaded.")
+            st.info("Nenhum dado de horário carregado.")
 
     # TAB 2: Parent Contacts
     with tab2:
@@ -206,7 +236,7 @@ if user_role == "Academy Coordinator":
                 new_teacher = st.text_input("Teacher Name *")
                 new_teacher_email = st.text_input("Teacher Email")
                 new_student = st.text_input("Student Name *")
-                new_grade = st.text_input("Grade (e.g., 3B, 5D)")
+                new_grade = st.text_input("Grade (e.g., 3B, 5D, 4y)")
 
             with c2:
                 new_day = st.selectbox("Day *", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
@@ -299,7 +329,7 @@ if user_role == "Academy Coordinator":
                                 st.error(f"Failed to update data source: {ex}")
 
 # -----------------------------------------------------------------------------
-# 5. TIER 2: SCHOOL COORDINATOR PORTAL
+# 6. TIER 2: SCHOOL COORDINATOR PORTAL
 # -----------------------------------------------------------------------------
 elif user_role == "School Coordinator":
     st.header("🏫 School Coordinator Portal")
@@ -314,7 +344,7 @@ elif user_role == "School Coordinator":
             st.dataframe(campus_df[disp_cols], use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# 6. TIER 3: ACADEMY TEACHER PORTAL
+# 7. TIER 3: ACADEMY TEACHER PORTAL
 # -----------------------------------------------------------------------------
 elif user_role == "Academy Teacher":
     st.header("👨‍🏫 Teacher Portal")
