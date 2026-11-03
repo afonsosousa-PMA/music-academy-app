@@ -2,125 +2,276 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 
-# Browser tab configuration
+# Page configuration
 st.set_page_config(
-    page_title="Music Academy Portal",
+    page_title="Music Academy Management Portal",
     page_icon="🎵",
     layout="wide"
 )
 
-# App Header
 st.title("🎵 Music Academy Management Portal")
-st.write("Welcome to your custom administration dashboard.")
 
-# Establish Google Sheets Connection
+# -----------------------------------------------------------------------------
+# 1. GOOGLE SHEETS CONNECTION & DATA LOADING
+# -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Sidebar Navigation
-st.sidebar.header("Navigation")
-menu_choice = st.sidebar.radio(
-    "Select View",
-    [
-        "📊 Master Database View",
-        "➕ Add New Student",
-        "📞 Parent Contacts",
-        "🚪 Studio Availability"
-    ]
-)
-
-# Helper function to load data from DATABASE tab
+@st.cache_data(ttl=5)
 def load_data():
     try:
-        return conn.read(worksheet="DATABASE", ttl=0)
+        # Reads the master "DATABASE" tab matching your Google Sheet
+        df = conn.read(worksheet="DATABASE", ttl=5)
+        # Ensure string types for clean searching and matching
+        for col in df.columns:
+            df[col] = df[col].astype(str).replace("nan", "").strip()
+        return df
     except Exception as e:
-        st.error(f"Error loading database: {e}")
+        st.error(f"Error reading 'DATABASE' tab from Google Sheets: {e}")
         return pd.DataFrame()
 
-# Load current data
 df = load_data()
 
-# OPTION 1: Master Database View
-if menu_choice == "📊 Master Database View":
-    st.header("📋 Master Data (DATABASE)")
-    if not df.empty:
-        search_query = st.text_input("🔍 Search by Student, Teacher, or Instrument:")
-        if search_query:
-            filtered_df = df[df.astype(str).apply(lambda row: row.str.contains(search_query, case=False).any(), axis=1)]
-            st.dataframe(filtered_df, use_container_width=True)
-        else:
-            st.dataframe(df, use_container_width=True)
-    else:
-        st.info("No data found or worksheet is empty.")
+# Fallback column structure matching your Google Sheet layout
+expected_cols = [
+    "Campus", "Teacher", "Day", "Start Time", "End Time", 
+    "Student", "Grade", "Instrument", "Inst. Year", "Level", 
+    "Room", "Lesson Duration", "Notes", "Parent Name", "Parent Phone", "Parent Email"
+]
 
-# OPTION 2: New Student / Lesson Form with Direct Write
-elif menu_choice == "➕ Add New Booking / Student":
-    st.header("📝 Register New Student & Lesson")
-    st.write("Fill out the form below to add a new registration directly to your Google Sheet.")
+if df.empty:
+    df = pd.DataFrame(columns=expected_cols)
 
-    with st.form("new_student_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            student_name = st.text_input("Student Name *")
-            instrument = st.selectbox("Instrument", ["Piano", "Guitar", "Violin", "Vocals", "Drums", "Flute", "Other"])
-            teacher = st.text_input("Teacher Name *")
-            room = st.selectbox("Room / Studio", ["Room 1", "Room 2", "Room 3", "Studio A", "Studio B"])
+# Ensure optional contact columns exist if not yet in Google Sheet
+for col in ["Parent Name", "Parent Phone", "Parent Email", "Teacher Email"]:
+    if col not in df.columns:
+        df[col] = ""
 
-        with col2:
-            day_of_week = st.selectbox("Day of Week", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
-            time_slot = st.time_input("Lesson Time")
-            parent_name = st.text_input("Parent / Guardian Name")
-            parent_contact = st.text_input("Contact Phone / Email")
+# -----------------------------------------------------------------------------
+# 2. LOGIN & ROLE-BASED ACCESS CONTROL (Sidebar)
+# -----------------------------------------------------------------------------
+st.sidebar.title("🔐 Portal Login")
 
-        submitted = st.form_submit_button("💾 Save & Update Google Sheet")
+user_role = st.sidebar.selectbox(
+    "Select Role",
+    ["Academy Coordinator", "School Coordinator", "Academy Teacher"]
+)
 
-        if submitted:
-            if not student_name or not teacher:
-                st.warning("Please enter at least the Student Name and Teacher Name.")
-            else:
-                # Double-booking conflict check
-                conflict = False
-                if not df.empty and "Room" in df.columns and "Day" in df.columns and "Time" in df.columns:
-                    check_conflict = df[
-                        (df["Room"] == room) & 
-                        (df["Day"] == day_of_week) & 
-                        (df["Time"] == str(time_slot))
-                    ]
-                    if not check_conflict.empty:
-                        conflict = True
+user_email = st.sidebar.text_input("Enter School Email", value="").strip().lower()
+st.sidebar.markdown("---")
 
-                if conflict:
-                    st.error(f"⚠️ Schedule Conflict Alert! {room} is already booked on {day_of_week} at {time_slot}.")
+# -----------------------------------------------------------------------------
+# 3. TIER 1: ACADEMY COORDINATOR (Full Access + Add/Edit Capability)
+# -----------------------------------------------------------------------------
+if user_role == "Academy Coordinator":
+    st.header("🏛️ Academy Coordinator Portal")
+
+    # Executive Overview Dashboard Metrics
+    st.subheader("📊 Executive Dashboard")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    
+    total_enrollments = len(df[df["Student"] != ""])
+    total_students = df["Student"].replace("", None).nunique()
+    total_teachers = df["Teacher"].replace("", None).nunique()
+    total_campuses = df["Campus"].replace("", None).nunique()
+    total_rooms = df["Room"].replace("", None).nunique()
+
+    m1.metric("Total Enrollments", total_enrollments)
+    m2.metric("Total Students", total_students)
+    m3.metric("Total Teachers", total_teachers)
+    m4.metric("Active Campuses", total_campuses)
+    m5.metric("Rooms / Studios", total_rooms)
+
+    st.markdown("---")
+
+    # Coordinator Navigation Tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📅 General Schedule & Filters", 
+        "📞 Parent Contact Directory", 
+        "➕ Add New Booking / Record", 
+        "✏️ Edit / Update Existing Records"
+    ])
+
+    # TAB 1: General Schedule View
+    with tab1:
+        st.subheader("Master Schedule Overview")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            campus_filter = st.selectbox("Filter by Campus", ["All Campuses"] + sorted(list(df["Campus"].unique())))
+        with col_f2:
+            day_filter = st.selectbox("Filter by Weekday", ["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+
+        filtered_df = df.copy()
+        if campus_filter != "All Campuses":
+            filtered_df = filtered_df[filtered_df["Campus"] == campus_filter]
+        if day_filter != "All Days":
+            filtered_df = filtered_df[filtered_df["Day"] == day_filter]
+
+        st.dataframe(filtered_df, use_container_width=True)
+
+    # TAB 2: Parent Contacts
+    with tab2:
+        st.subheader("Parent & Guardian Directory")
+        st.dataframe(df[["Student", "Grade", "Campus", "Parent Name", "Parent Phone", "Parent Email"]], use_container_width=True)
+
+    # TAB 3: Add New Records
+    with tab3:
+        st.subheader("➕ Add New Schedule / Student Record")
+        with st.form("add_record_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                new_campus = st.selectbox("Campus *", ["Alfragide", "Restelo", "PdE", "Other"])
+                new_teacher = st.text_input("Teacher Name *")
+                new_teacher_email = st.text_input("Teacher Email")
+                new_student = st.text_input("Student Name *")
+                new_grade = st.text_input("Grade (e.g., 3B, 5D)")
+
+            with c2:
+                new_day = st.selectbox("Day *", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
+                new_start = st.text_input("Start Time (HH:MM)", value="14:00")
+                new_end = st.text_input("End Time (HH:MM)", value="14:30")
+                new_room = st.text_input("Room / Studio *", value="Music")
+                new_duration = st.selectbox("Duration (min)", [30, 45, 60])
+
+            with c3:
+                new_instrument = st.text_input("Instrument", value="Piano")
+                new_inst_year = st.text_input("Instrument Year", value="1st")
+                new_parent_name = st.text_input("Parent / Guardian Name")
+                new_parent_phone = st.text_input("Parent Phone")
+                new_parent_email = st.text_input("Parent Email")
+
+            submit_add = st.form_submit_button("💾 Save Record to Google Sheets")
+
+            if submit_add:
+                if not new_student or not new_teacher or not new_room:
+                    st.warning("Please fill in all required fields marked with *.")
                 else:
-                    # Prepare new record row matching Google Sheet structure
-                    new_data = pd.DataFrame([{
-                        "Student Name": student_name,
-                        "Instrument": instrument,
-                        "Teacher": teacher,
-                        "Room": room,
-                        "Day": day_of_week,
-                        "Time": str(time_slot),
-                        "Parent Name": parent_parent_name if 'parent_parent_name' in locals() else parent_name,
-                        "Parent Contact": parent_contact
-                    }])
+                    # Double-booking check for Room + Campus + Day + Start Time
+                    conflict = df[
+                        (df["Campus"] == new_campus) & 
+                        (df["Room"] == new_room) & 
+                        (df["Day"] == new_day) & 
+                        (df["Start Time"] == new_start)
+                    ]
+                    if not conflict.empty:
+                        st.error(f"⚠️ Room Conflict! {new_room} at {new_campus} is already booked on {new_day} at {new_start}.")
+                    else:
+                        new_row = pd.DataFrame([{
+                            "Campus": new_campus, "Teacher": new_teacher, "Teacher Email": new_teacher_email,
+                            "Day": new_day, "Start Time": new_start, "End Time": new_end,
+                            "Student": new_student, "Grade": new_grade, "Instrument": new_instrument,
+                            "Inst. Year": new_inst_year, "Level": "0", "Room": new_room,
+                            "Lesson Duration": str(new_duration), "Notes": "",
+                            "Parent Name": new_parent_name, "Parent Phone": new_parent_phone, "Parent Email": new_parent_email
+                        }])
+                        updated_df = pd.concat([df, new_row], ignore_index=True)
+                        try:
+                            conn.update(worksheet="DATABASE", data=updated_df)
+                            st.success(f"✅ Record for {new_student} added successfully!")
+                            st.cache_data.clear()
+                        except Exception as ex:
+                            st.error(f"Failed to save to Google Sheets: {ex}")
 
-                    # Append to existing dataframe and write back to Google Sheets
-                    updated_df = pd.concat([df, new_data], ignore_index=True)
-                    try:
-                        conn.update(worksheet="DATABASE", data=updated_df)
-                        st.success(f"✅ Record for {student_name} saved directly to Google Sheets!")
-                        st.cache_data.clear()
-                    except Exception as e:
-                        st.error(f"Could not save to Google Sheets. Verify permissions. Details: {e}")
+    # TAB 4: Edit Existing Records
+    with tab4:
+        st.subheader("✏️ Edit / Modify Existing Record")
+        if not df.empty:
+            student_list = df["Student"].unique().tolist()
+            selected_student = st.selectbox("Select Student to Edit", student_list)
+            
+            student_rows = df[df["Student"] == selected_student]
+            if not student_rows.empty:
+                idx = student_rows.index[0]
+                row_data = df.loc[idx]
 
-# OPTION 3: Parent Directory
-elif menu_choice == "📞 Parent Contacts":
-    st.header("📞 Parent & Guardian Contact Directory")
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
+                with st.form("edit_record_form"):
+                    e1, e2 = st.columns(2)
+                    with e1:
+                        edit_campus = st.text_input("Campus", value=str(row_data.get("Campus", "")))
+                        edit_teacher = st.text_input("Teacher", value=str(row_data.get("Teacher", "")))
+                        edit_day = st.text_input("Day", value=str(row_data.get("Day", "")))
+                        edit_start = st.text_input("Start Time", value=str(row_data.get("Start Time", "")))
+                        edit_end = st.text_input("End Time", value=str(row_data.get("End Time", "")))
+                        edit_room = st.text_input("Room", value=str(row_data.get("Room", "")))
 
-# OPTION 4: Studio Availability
-elif menu_choice == "🚪 Studio Availability":
-    st.header("🚪 Studio & Room Assignments")
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
+                    with e2:
+                        edit_instrument = st.text_input("Instrument", value=str(row_data.get("Instrument", "")))
+                        edit_grade = st.text_input("Grade", value=str(row_data.get("Grade", "")))
+                        edit_parent_name = st.text_input("Parent Name", value=str(row_data.get("Parent Name", "")))
+                        edit_parent_phone = st.text_input("Parent Phone", value=str(row_data.get("Parent Phone", "")))
+                        edit_parent_email = st.text_input("Parent Email", value=str(row_data.get("Parent Email", "")))
+
+                    submit_edit = st.form_submit_button("🔄 Update Record in Google Sheets")
+
+                    if submit_edit:
+                        df.at[idx, "Campus"] = edit_campus
+                        df.at[idx, "Teacher"] = edit_teacher
+                        df.at[idx, "Day"] = edit_day
+                        df.at[idx, "Start Time"] = edit_start
+                        df.at[idx, "End Time"] = edit_end
+                        df.at[idx, "Room"] = edit_room
+                        df.at[idx, "Instrument"] = edit_instrument
+                        df.at[idx, "Grade"] = edit_grade
+                        df.at[idx, "Parent Name"] = edit_parent_name
+                        df.at[idx, "Parent Phone"] = edit_parent_phone
+                        df.at[idx, "Parent Email"] = edit_parent_email
+
+                        try:
+                            conn.update(worksheet="DATABASE", data=df)
+                            st.success(f"✅ Record for {selected_student} updated!")
+                            st.cache_data.clear()
+                        except Exception as ex:
+                            st.error(f"Failed to update Google Sheets: {ex}")
+
+# -----------------------------------------------------------------------------
+# 4. TIER 2: SCHOOL COORDINATOR (Campus Specific View)
+# -----------------------------------------------------------------------------
+elif user_role == "School Coordinator":
+    st.header("🏫 School Coordinator Portal")
+    
+    campus_options = sorted([c for c in df["Campus"].unique() if c])
+    if campus_options:
+        selected_campus = st.selectbox("Select Your Campus", campus_options)
+        campus_df = df[df["Campus"] == selected_campus]
+
+        st.subheader(f"General Schedule — {selected_campus} Campus")
+        st.dataframe(campus_df[["Day", "Start Time", "End Time", "Room", "Student", "Grade", "Instrument", "Teacher"]], use_container_width=True)
+    else:
+        st.info("No campus data found.")
+
+# -----------------------------------------------------------------------------
+# 5. TIER 3: ACADEMY TEACHER (Restricted Personal View)
+# -----------------------------------------------------------------------------
+elif user_role == "Academy Teacher":
+    st.header("👨‍🏫 Teacher Portal")
+
+    if not user_email:
+        st.info("Please enter your registered school email address in the sidebar to load your personalized schedule.")
+    else:
+        # Filter matching teacher email or teacher name matching email username
+        teacher_df = df[
+            (df["Teacher Email"].str.lower() == user_email) | 
+            (df["Teacher"].str.lower().apply(lambda x: x.replace(" ", ".")) in user_email)
+        ]
+
+        if teacher_df.empty:
+            st.warning(f"No records found matching email '{user_email}'. Please verify your login email or contact your Academy Coordinator.")
+        else:
+            teacher_name = teacher_df["Teacher"].iloc[0]
+            teacher_campus = teacher_df["Campus"].iloc[0]
+
+            st.success(f"Welcome back, **{teacher_name}**!")
+
+            t_tab1, t_tab2, t_tab3 = st.tabs(["📅 My Personal Schedule", "🏫 My Campus Schedule", "📞 My Students' Parent Contacts"])
+
+            with t_tab1:
+                st.subheader(f"Personal Timetable — {teacher_name}")
+                st.dataframe(teacher_df[["Day", "Start Time", "End Time", "Campus", "Room", "Student", "Grade", "Instrument"]], use_container_width=True)
+
+            with t_tab2:
+                st.subheader(f"Campus Schedule — {teacher_campus}")
+                campus_df = df[df["Campus"] == teacher_campus]
+                st.dataframe(campus_df[["Day", "Start Time", "End Time", "Room", "Student", "Instrument", "Teacher"]], use_container_width=True)
+
+            with t_tab3:
+                st.subheader("Assigned Student Parent Contacts")
+                st.dataframe(teacher_df[["Student", "Grade", "Instrument", "Parent Name", "Parent Phone", "Parent Email"]], use_container_width=True)
