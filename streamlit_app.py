@@ -78,7 +78,7 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 3. DICIONÁRIOS DE SALAS POR CAMPUS
+# 3. DICIONÁRIOS DE SALAS E INSTRUMENTOS POR CAMPUS
 # -----------------------------------------------------------------------------
 ROOM_OPTIONS = {
     "Alfragide": [
@@ -90,8 +90,13 @@ ROOM_OPTIONS = {
     "Other": ["Studio 1", "Room A", "Room B"]
 }
 
+INSTRUMENT_OPTIONS = {
+    "Restelo": ["Drums", "Guitar", "Piano", "Music Initiation", "Music Atelier"],
+    "PdE": ["Guitar", "Piano", "Violin", "Music Initiation", "Music Atelier"]
+}
+
 # -----------------------------------------------------------------------------
-# 4. AUXILIARES, METRICAS E FORMATADORES AUTOMÁTICOS
+# 4. AUXILIARES, MÉTRICAS E FORMATADORES AUTOMÁTICOS
 # -----------------------------------------------------------------------------
 def calculate_end_time(start_time_str, duration_minutes):
     """Calcula automaticamente a hora de fim a partir da hora de início e duração."""
@@ -164,6 +169,15 @@ def check_room_conflict(data, campus, day, room, start_time, exclude_idx=None):
         return True, f"A sala '{room}' no campus '{campus}' ({day} às {start_time}) já está ocupada por {teacher} com o aluno {student}."
     
     return False, ""
+
+# Mapeamento seguro de emails de professores
+teacher_email_map = {}
+if not df.empty and "Teacher" in df.columns and "Teacher Email" in df.columns:
+    for _, r in df.iterrows():
+        t_name = r.get("Teacher", "").strip()
+        t_email = r.get("Teacher Email", "").strip()
+        if t_name and t_email and t_name not in teacher_email_map:
+            teacher_email_map[t_name] = t_email
 
 # -----------------------------------------------------------------------------
 # 5. BARRA LATERAL: LOGIN COM PIN & DEV MODE
@@ -378,23 +392,35 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
             )
             st.dataframe(df[contact_cols], use_container_width=True, hide_index=True)
 
-    # TAB 4: ADD NEW RECORDS (DROPDOWNS & AUTOMATIC END TIME)
+    # TAB 4: ADD NEW RECORDS (EMAIL AUTOMÁTICO DO PROFESSOR E INSTRUMENTOS RESTRITOS)
     with tab4:
         st.subheader("➕ Add New Schedule / Student Record")
         
-        # Opções dinâmicas para dropdowns de professores e instrumentos
         existing_teachers = sorted([t for t in df["Teacher"].unique() if t]) if not df.empty else []
-        existing_instruments = sorted([i for i in df["Instrument"].unique() if i]) if not df.empty else ["Piano", "Guitar", "Violin", "Drums", "Voice"]
 
-        # Seleção de Campus FORA do formulário para atualizar as salas dinamicamente
-        new_campus = st.selectbox("Campus *", ["Alfragide", "PdE", "Restelo", "Other"], key="add_campus_select")
+        # Seleção Dinâmica de Campus e Professor FORA do formulário para auto-preenchimento
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            new_campus = st.selectbox("Campus *", ["Alfragide", "PdE", "Restelo", "Other"], key="add_campus_select")
+        with sc2:
+            new_teacher = st.selectbox("Teacher Name *", existing_teachers if existing_teachers else ["Select Teacher"], key="add_teacher_select")
+
+        # Obter email automático do professor
+        auto_teacher_email = teacher_email_map.get(new_teacher, f"{new_teacher.lower().replace(' ', '.')}@park-is.com" if new_teacher else "")
+
+        # Definir salas e instrumentos disponíveis de acordo com o campus selecionado
         available_rooms = ROOM_OPTIONS.get(new_campus, ROOM_OPTIONS["Other"])
+        
+        if new_campus in INSTRUMENT_OPTIONS:
+            available_instruments = INSTRUMENT_OPTIONS[new_campus]
+        else:
+            base_insts = sorted([i for i in df["Instrument"].unique() if i and "therapy" not in i.lower()]) if not df.empty else ["Piano", "Guitar", "Violin", "Drums", "Voice"]
+            available_instruments = [i for i in base_insts if "therapy" not in i.lower()]
 
         with st.form("add_record_form", clear_on_submit=True):
             c1, c2, c3 = st.columns(3)
             with c1:
-                new_teacher = st.selectbox("Teacher Name *", existing_teachers if existing_teachers else ["Select Teacher"])
-                new_teacher_email = st.text_input("Teacher Email")
+                new_teacher_email = st.text_input("Teacher Email", value=auto_teacher_email)
                 new_student = st.text_input("Student Name *")
                 new_grade = st.text_input("Grade (e.g., 3B, 5D, 4y)")
 
@@ -405,7 +431,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 new_room = st.selectbox("Room / Studio *", available_rooms)
 
             with c3:
-                new_instrument = st.selectbox("Instrument *", existing_instruments)
+                new_instrument = st.selectbox("Instrument *", available_instruments)
                 new_inst_year = st.text_input("Instrument Year", value="1st")
                 new_notes = st.text_input("Notes (e.g. 30+30)", value="")
                 new_parent_name = st.text_input("Parent / Guardian Name")
@@ -418,7 +444,6 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 if not new_student or not new_teacher or not new_room or not new_start:
                     st.warning("Please fill in all required fields marked with *.")
                 else:
-                    # Calcular hora de fim automaticamente
                     computed_end_time = calculate_end_time(new_start, new_duration)
                     
                     has_conflict, msg = check_room_conflict(df, new_campus, new_day, new_room, new_start)
@@ -441,7 +466,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                         except Exception as ex:
                             st.error(f"Failed to update data source: {ex}")
 
-    # TAB 5: EDIT EXISTING RECORDS (DROPDOWNS E END TIME AUTOMÁTICO)
+    # TAB 5: EDIT EXISTING RECORDS
     with tab5:
         st.subheader("✏️ Edit / Modify Existing Record")
         if not df.empty and "Student" in df.columns:
@@ -454,13 +479,13 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                     row_data = df.loc[idx]
 
                     existing_teachers = sorted([t for t in df["Teacher"].unique() if t])
-                    existing_instruments = sorted([i for i in df["Instrument"].unique() if i])
-
+                    
                     with st.form("edit_record_form"):
                         e1, e2 = st.columns(2)
                         with e1:
                             edit_campus = st.selectbox("Campus", ["Alfragide", "PdE", "Restelo", "Other"], index=["Alfragide", "PdE", "Restelo", "Other"].index(row_data.get("Campus", "Alfragide")) if row_data.get("Campus") in ["Alfragide", "PdE", "Restelo", "Other"] else 0)
                             edit_teacher = st.selectbox("Teacher", existing_teachers, index=existing_teachers.index(row_data.get("Teacher")) if row_data.get("Teacher") in existing_teachers else 0)
+                            edit_teacher_email = st.text_input("Teacher Email", value=str(row_data.get("Teacher Email", teacher_email_map.get(row_data.get("Teacher"), ""))))
                             edit_day = st.selectbox("Day", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].index(row_data.get("Day", "Monday")) if row_data.get("Day") in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] else 0)
                             edit_start = st.text_input("Start Time (HH:MM)", value=str(row_data.get("Start Time", "")))
                             edit_duration = st.selectbox("Duration (min)", [30, 45, 60], index=[30, 45, 60].index(int(row_data.get("Lesson Duration", 30))) if str(row_data.get("Lesson Duration")).isdigit() and int(row_data.get("Lesson Duration")) in [30, 45, 60] else 0)
@@ -469,7 +494,14 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                             edit_room = st.selectbox("Room", current_rooms, index=current_rooms.index(row_data.get("Room")) if row_data.get("Room") in current_rooms else 0)
 
                         with e2:
-                            edit_instrument = st.selectbox("Instrument", existing_instruments, index=existing_instruments.index(row_data.get("Instrument")) if row_data.get("Instrument") in existing_instruments else 0)
+                            if edit_campus in INSTRUMENT_OPTIONS:
+                                edit_inst_opts = INSTRUMENT_OPTIONS[edit_campus]
+                            else:
+                                edit_inst_opts = sorted([i for i in df["Instrument"].unique() if i and "therapy" not in i.lower()])
+                            
+                            current_inst = row_data.get("Instrument", "")
+                            edit_instrument = st.selectbox("Instrument", edit_inst_opts, index=edit_inst_opts.index(current_inst) if current_inst in edit_inst_opts else 0)
+                            
                             edit_grade = st.text_input("Grade", value=str(row_data.get("Grade", "")))
                             edit_notes = st.text_input("Notes", value=str(row_data.get("Notes", "")))
                             edit_parent_name = st.text_input("Parent Name", value=str(row_data.get("Parent Name", "")))
@@ -486,6 +518,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                                 computed_end = calculate_end_time(edit_start, edit_duration)
                                 df.at[idx, "Campus"] = edit_campus
                                 df.at[idx, "Teacher"] = edit_teacher
+                                df.at[idx, "Teacher Email"] = edit_teacher_email
                                 df.at[idx, "Day"] = edit_day
                                 df.at[idx, "Start Time"] = edit_start
                                 df.at[idx, "End Time"] = computed_end
