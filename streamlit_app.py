@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import re
+import time
 from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------------------------------------------------------
-# PAGE CONFIGURATION
+# CONFIGURAÇÃO DA PÁGINA
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Park Music Academy Management Portal",
@@ -15,7 +16,32 @@ st.set_page_config(
 st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 
 # -----------------------------------------------------------------------------
-# 1. DATA LAYER (Decoupled & Prepared for Standalone Migration)
+# 1. GESTÃO DE SESSÃO E AUTO-LOGOUT (SEGURANÇA RGPD)
+# -----------------------------------------------------------------------------
+# Tempo limite de inatividade em segundos (ex: 900 segundos = 15 minutos)
+INACTIVITY_TIMEOUT = 900 
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
+if "last_activity" not in st.session_state:
+    st.session_state.last_activity = time.time()
+
+# Verificar timeout de inatividade
+if st.session_state.authenticated:
+    if time.time() - st.session_state.last_activity > INACTIVITY_TIMEOUT:
+        st.session_state.authenticated = False
+        st.session_state.user_role = None
+        st.session_state.user_email = ""
+        st.warning("⚠️ Sessão expirada por inatividade. Por favor, faça login novamente.")
+    else:
+        st.session_state.last_activity = time.time()
+
+# -----------------------------------------------------------------------------
+# 2. CAMADA DE DADOS
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -35,7 +61,7 @@ def load_data():
             df[col] = df[col].astype(str).str.strip()
         return df
     except Exception as e:
-        st.error(f"Error loading master database: {e}")
+        st.error(f"Erro ao carregar a base de dados: {e}")
         return pd.DataFrame()
 
 df = load_data()
@@ -53,7 +79,7 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 2. HELPER FUNCTIONS & CATEGORIZATION
+# 3. FUNÇÕES AUXILIARES E CATEGORIZAÇÃO
 # -----------------------------------------------------------------------------
 def get_grade_category(grade_str):
     if not grade_str:
@@ -83,25 +109,68 @@ def calculate_unique_students(data):
     return data["Student"].nunique()
 
 # -----------------------------------------------------------------------------
-# 3. AUTHENTICATION & ROLE-BASED ACCESS (Sidebar)
+# 4. BARRA LATERAL: LOGIN COM PIN & DEV MODE (MODO CONSTRUTOR)
 # -----------------------------------------------------------------------------
-st.sidebar.title("🔐 Portal Login")
+st.sidebar.title("🔐 Portal Security Login")
 
-user_role = st.sidebar.selectbox(
-    "Select Role",
-    ["Academy Coordinator", "School Coordinator", "Academy Teacher"]
-)
+# MODO DE DESENVOLVIMENTO (Acesso Rápido para o Coordenador da Academia)
+dev_mode = st.sidebar.checkbox("🛠️ Developer / Easy Access Mode", value=True)
 
-user_email = st.sidebar.text_input("Enter School Email", value="").strip().lower()
-st.sidebar.markdown("---")
+if dev_mode:
+    st.sidebar.success("🔓 Dev Mode Ativo: Acesso direto como Coordenador da Academia")
+    st.session_state.authenticated = True
+    st.session_state.user_role = "Academy Coordinator"
+    user_role = "Academy Coordinator"
+    user_email = "coordinator@park-is.com"
+else:
+    if not st.session_state.authenticated:
+        st.sidebar.subheader("Introduza as suas credenciais")
+        selected_role = st.sidebar.selectbox(
+            "Selecione o Perfil",
+            ["Academy Coordinator", "School Coordinator", "Academy Teacher"]
+        )
+        input_email = st.sidebar.text_input("Email da Escola", value="").strip().lower()
+        input_pin = st.sidebar.text_input("Código / PIN de Acesso", type="password")
+
+        if st.sidebar.button("🔑 Entrar no Portal"):
+            # Validação simples de PIN por perfil
+            valid_login = False
+            if selected_role == "Academy Coordinator" and input_pin == "9999":
+                valid_login = True
+            elif selected_role == "School Coordinator" and input_pin == "1234":
+                valid_login = True
+            elif selected_role == "Academy Teacher" and input_pin == "2026" and input_email != "":
+                valid_login = True
+            
+            if valid_login:
+                st.session_state.authenticated = True
+                st.session_state.user_role = selected_role
+                st.session_state.user_email = input_email
+                st.session_state.last_activity = time.time()
+                st.sidebar.success("Login efetuado com sucesso!")
+                st.rerun()
+            else:
+                st.sidebar.error("⚠️ PIN ou Email incorreto. Tente novamente.")
+    else:
+        st.sidebar.info(f"Sessão ativa: **{st.session_state.user_role}**")
+        if st.session_state.user_email:
+            st.sidebar.caption(f"Email: {st.session_state.user_email}")
+        if st.sidebar.button("🔒 Sair (Logout)"):
+            st.session_state.authenticated = False
+            st.session_state.user_role = None
+            st.session_state.user_email = ""
+            st.rerun()
+
+user_role = st.session_state.user_role
+user_email = st.session_state.user_email
 
 # -----------------------------------------------------------------------------
-# 4. TIER 1: ACADEMY COORDINATOR PORTAL
+# 5. TIER 1: ACADEMY COORDINATOR PORTAL
 # -----------------------------------------------------------------------------
-if user_role == "Academy Coordinator":
+if st.session_state.authenticated and user_role == "Academy Coordinator":
     st.header("🏛️ Academy Coordinator Portal")
 
-    # Executive Overview Dashboard
+    # Executive Dashboard
     st.subheader("📊 EXECUTIVE DASHBOARD")
     t1, t2, t3, t4 = st.columns(4)
     t1.metric("Total Lessons", len(valid_df))
@@ -111,7 +180,7 @@ if user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    # Campus Breakdown Cards
+    # Campus Breakdown
     st.subheader("📍 Campus Enrollments & Unique Students Breakdown")
     c_alfragide, c_pde, c_restelo = st.columns(3)
 
@@ -307,9 +376,9 @@ if user_role == "Academy Coordinator":
                                 st.error(f"Failed to update data source: {ex}")
 
 # -----------------------------------------------------------------------------
-# 5. TIER 2: SCHOOL COORDINATOR PORTAL
+# 6. TIER 2: SCHOOL COORDINATOR PORTAL
 # -----------------------------------------------------------------------------
-elif user_role == "School Coordinator":
+elif st.session_state.authenticated and user_role == "School Coordinator":
     st.header("🏫 School Coordinator Portal")
     if not df.empty and "Campus" in df.columns:
         campus_options = sorted([c for c in df["Campus"].unique() if c])
@@ -329,13 +398,13 @@ elif user_role == "School Coordinator":
                     st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 6. TIER 3: ACADEMY TEACHER PORTAL (Cleaned Up Schedule View)
+# 7. TIER 3: ACADEMY TEACHER PORTAL
 # -----------------------------------------------------------------------------
-elif user_role == "Academy Teacher":
+elif st.session_state.authenticated and user_role == "Academy Teacher":
     st.header("👨‍🏫 Teacher Portal")
 
     if not user_email:
-        st.info("Please enter your registered school email address in the sidebar to load your personalized schedule.")
+        st.info("Por favor, introduza o seu email institucional na barra lateral para carregar o seu horário.")
     else:
         if not df.empty and "Teacher" in df.columns:
             def match_teacher(row, input_email):
@@ -355,7 +424,7 @@ elif user_role == "Academy Teacher":
             teacher_df = df[df.apply(lambda r: match_teacher(r, user_email), axis=1)]
 
             if teacher_df.empty:
-                st.warning(f"No records found matching email '{user_email}'. Please verify your email entry or contact your Academy Coordinator.")
+                st.warning(f"Nenhum registo encontrado para o email '{user_email}'. Verifique o seu email ou contacte a coordenação.")
             else:
                 teacher_name = teacher_df["Teacher"].iloc[0]
                 teacher_campus = teacher_df["Campus"].iloc[0] if "Campus" in teacher_df.columns else "Main"
@@ -364,7 +433,7 @@ elif user_role == "Academy Teacher":
 
                 t_tab1, t_tab2, t_tab3 = st.tabs(["📅 My Personal Schedule", "🏫 My Campus Schedule", "📞 My Students' Parent Contacts"])
 
-                # TAB 1: Clean Timetable (Removed Parent Email & Parent Phone to prevent duplication)
+                # TAB 1: Horário Pessoal
                 with t_tab1:
                     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                     for day in days:
@@ -377,13 +446,12 @@ elif user_role == "Academy Teacher":
                                 st.markdown(f"### 📘 {day.upper()} — {campus.upper()}")
                                 
                                 c_df["Time"] = c_df["Start Time"] + " - " + c_df["End Time"]
-                                # Streamlined columns focusing purely on lesson details
                                 disp_df = c_df[["Time", "Student", "Grade", "Instrument", "Room"]].copy()
                                 disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room"]
                                 
                                 st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
-                # TAB 2: Campus Overview Schedule
+                # TAB 2: Horário Geral do Campus
                 with t_tab2:
                     st.subheader(f"General Schedule — {teacher_campus} Campus")
                     campus_df = df[df["Campus"] == teacher_campus]
@@ -396,9 +464,11 @@ elif user_role == "Academy Teacher":
                             disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Teacher"]
                             st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
-                # TAB 3: Dedicated Parent Contact Directory
+                # TAB 3: Contactos dos Encarregados de Educação
                 with t_tab3:
                     st.subheader("Assigned Student Parent Contacts")
                     cont_df = teacher_df[["Student", "Grade", "Instrument", "Parent Name", "Parent Email", "Parent Phone"]].copy()
                     cont_df.columns = ["Student", "Class", "Instrument", "Parent Name", "Parent Email", "Parent Phone"]
                     st.dataframe(cont_df, use_container_width=True, hide_index=True)
+else:
+    st.info("👈 Por favor, utilize o painel de Login na barra lateral para aceder à aplicação.")
