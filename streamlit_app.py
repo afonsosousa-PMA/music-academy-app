@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
 # Browser tab configuration
 st.set_page_config(
@@ -11,6 +12,9 @@ st.set_page_config(
 # App Header
 st.title("🎵 Music Academy Management Portal")
 st.write("Welcome to your custom administration dashboard.")
+
+# Establish Google Sheets Connection
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Sidebar Navigation
 st.sidebar.header("Navigation")
@@ -24,16 +28,10 @@ menu_choice = st.sidebar.radio(
     ]
 )
 
-# Function to load Google Sheets data
+# Helper function to load data from DATABASE tab
 def load_data():
     try:
-        sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        if "/d/" in sheet_url:
-            sheet_id = sheet_url.split("/d/")[1].split("/")[0]
-            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=DATABASE"
-        else:
-            csv_url = sheet_url
-        return pd.read_csv(csv_url)
+        return conn.read(worksheet="DATABASE", ttl=0)
     except Exception as e:
         st.error(f"Error loading database: {e}")
         return pd.DataFrame()
@@ -52,12 +50,12 @@ if menu_choice == "📊 Master Database View":
         else:
             st.dataframe(df, use_container_width=True)
     else:
-        st.info("No data found or loading...")
+        st.info("No data found or worksheet is empty.")
 
-# OPTION 2: New Student / Lesson Form
+# OPTION 2: New Student / Lesson Form with Direct Write
 elif menu_choice == "➕ Add New Booking / Student":
     st.header("📝 Register New Student & Lesson")
-    st.write("Fill out the form below to add a new registration to your database.")
+    st.write("Fill out the form below to add a new registration directly to your Google Sheet.")
 
     with st.form("new_student_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -74,13 +72,13 @@ elif menu_choice == "➕ Add New Booking / Student":
             parent_name = st.text_input("Parent / Guardian Name")
             parent_contact = st.text_input("Contact Phone / Email")
 
-        submitted = st.form_submit_button("💾 Save Record")
+        submitted = st.form_submit_button("💾 Save & Update Google Sheet")
 
         if submitted:
             if not student_name or not teacher:
                 st.warning("Please enter at least the Student Name and Teacher Name.")
             else:
-                # Double-booking prevention check
+                # Double-booking conflict check
                 conflict = False
                 if not df.empty and "Room" in df.columns and "Day" in df.columns and "Time" in df.columns:
                     check_conflict = df[
@@ -94,8 +92,26 @@ elif menu_choice == "➕ Add New Booking / Student":
                 if conflict:
                     st.error(f"⚠️ Schedule Conflict Alert! {room} is already booked on {day_of_week} at {time_slot}.")
                 else:
-                    st.success(f"✅ Record for {student_name} successfully validated!")
-                    st.info("Note: To write changes directly back to Google Sheets from the app, we will set up direct write access in the next step.")
+                    # Prepare new record row matching Google Sheet structure
+                    new_data = pd.DataFrame([{
+                        "Student Name": student_name,
+                        "Instrument": instrument,
+                        "Teacher": teacher,
+                        "Room": room,
+                        "Day": day_of_week,
+                        "Time": str(time_slot),
+                        "Parent Name": parent_parent_name if 'parent_parent_name' in locals() else parent_name,
+                        "Parent Contact": parent_contact
+                    }])
+
+                    # Append to existing dataframe and write back to Google Sheets
+                    updated_df = pd.concat([df, new_data], ignore_index=True)
+                    try:
+                        conn.update(worksheet="DATABASE", data=updated_df)
+                        st.success(f"✅ Record for {student_name} saved directly to Google Sheets!")
+                        st.cache_data.clear()
+                    except Exception as e:
+                        st.error(f"Could not save to Google Sheets. Verify permissions. Details: {e}")
 
 # OPTION 3: Parent Directory
 elif menu_choice == "📞 Parent Contacts":
