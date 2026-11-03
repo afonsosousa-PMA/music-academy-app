@@ -40,7 +40,7 @@ if st.session_state.authenticated:
         st.session_state.last_activity = time.time()
 
 # -----------------------------------------------------------------------------
-# 2. CAMADA DE DADOS
+# 2. CAMADA DE DADOS (COM CARREGAMENTO DE Apenas LEITURA PROTEGIDO)
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -68,7 +68,8 @@ df = load_data()
 expected_cols = [
     "Campus", "Teacher", "Day", "Start Time", "End Time", 
     "Student", "Grade", "Instrument", "Inst. Year", "Level", 
-    "Room", "Lesson Duration", "Notes", "Parent Name", "Parent Phone", "Parent Email", "Teacher Email"
+    "Room", "Lesson Duration", "Notes", "Parent Name", "Parent Phone", "Parent Email", 
+    "Teacher Email", "Teacher Personal Email", "Teacher Phone", "Teacher Taught Instruments"
 ]
 
 for col in expected_cols:
@@ -78,7 +79,7 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 3. DICIONÁRIOS DE REGRA (SALAS, INSTRUMENTOS E EMAILS DOS PROFESSORES)
+# 3. DICIONÁRIOS DE REGRA (SALAS, INSTRUMENTOS E DADOS DOS PROFESSORES)
 # -----------------------------------------------------------------------------
 ROOM_OPTIONS = {
     "Alfragide": [
@@ -95,16 +96,30 @@ INSTRUMENT_OPTIONS = {
     "PdE": ["Guitar", "Piano", "Violin", "Music Initiation", "Music Atelier"]
 }
 
-teacher_email_map = {}
-if not df.empty and "Teacher" in df.columns and "Teacher Email" in df.columns:
+# Dicionários de professores mantidos em memória durante a sessão
+if "teacher_details_map" not in st.session_state:
+    st.session_state.teacher_details_map = {}
+
+# Povoar mapa inicial com os dados existentes na folha de cálculo
+if not df.empty and "Teacher" in df.columns:
     for _, r in df.iterrows():
         t_name = r.get("Teacher", "").strip()
-        t_email = r.get("Teacher Email", "").strip()
-        if t_name and t_email and t_name not in teacher_email_map:
-            teacher_email_map[t_name] = t_email
+        if t_name and t_name not in st.session_state.teacher_details_map:
+            st.session_state.teacher_details_map[t_name] = {
+                "school_email": r.get("Teacher Email", ""),
+                "personal_email": r.get("Teacher Personal Email", ""),
+                "phone": r.get("Teacher Phone", ""),
+                "instruments": r.get("Teacher Taught Instruments", r.get("Instrument", ""))
+            }
+
+# Modo de Proteção: Ativar para impedir escrita na folha de cálculo
+READ_ONLY_MODE = st.sidebar.checkbox("🔒 Read-Only Mode (Protege o Google Sheets)", value=True)
+
+if READ_ONLY_MODE:
+    st.sidebar.info("🛡️ MODO DE PROTEÇÃO ATIVO: As alterações feitas na app não alteram o ficheiro Google Sheets original.")
 
 # -----------------------------------------------------------------------------
-# 4. AUXILIARES, MÉTRICAS E FORMATADORES AUTOMÁTICOS
+# 4. AUXILIARES E FORMATADORES
 # -----------------------------------------------------------------------------
 def calculate_end_time(start_time_str, duration_minutes):
     try:
@@ -185,7 +200,7 @@ st.sidebar.title("🔐 Portal Security Login")
 dev_mode = st.sidebar.checkbox("🛠️ Developer / Easy Access Mode", value=True)
 
 if dev_mode:
-    st.sidebar.success("🔓 Dev Mode Ativo: Acesso direto como Coordenador da Academia")
+    st.sidebar.success("🔓 Dev Mode Ativo: Coordenador da Academia")
     st.session_state.authenticated = True
     st.session_state.user_role = "Academy Coordinator"
     user_role = "Academy Coordinator"
@@ -232,12 +247,12 @@ user_role = st.session_state.user_role
 user_email = st.session_state.user_email
 
 # -----------------------------------------------------------------------------
-# 6. TIER 1: ACADEMY COORDINATOR PORTAL
+# 6. PORTAL DO COORDENADOR DA ACADEMIA
 # -----------------------------------------------------------------------------
 if st.session_state.authenticated and user_role == "Academy Coordinator":
     st.header("🏛️ Academy Coordinator Portal")
 
-    # Executive Dashboard
+    # Dashboard Executivo
     st.subheader("📊 EXECUTIVE DASHBOARD")
     t1, t2, t3, t4 = st.columns(4)
     t1.metric("Total Lessons", len(valid_df))
@@ -247,7 +262,6 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    # MENU DE APENAS 3 SEPARADORES CONFORME PEDIDO
     tab1, tab2, tab3 = st.tabs([
         "📅 General Schedules", 
         "📋 Student Profile",
@@ -255,7 +269,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
     ])
 
     # -------------------------------------------------------------------------
-    # TAB 1: GENERAL SCHEDULES (VISÃO SEMANAL EXCEL)
+    # TAB 1: GENERAL SCHEDULES
     # -------------------------------------------------------------------------
     with tab1:
         st.subheader("Master Schedule Overview (Weekly View)")
@@ -330,12 +344,11 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 st.info("No lessons found matching the selected filters.")
 
     # -------------------------------------------------------------------------
-    # TAB 2: STUDENT PROFILE (COM BOTÃO + ADD EM CIMA E BOTÕES EDIT/DELETE À DIREITA)
+    # TAB 2: STUDENT PROFILE
     # -------------------------------------------------------------------------
     with tab2:
         st.subheader("📋 Student Profile & Academic Details")
 
-        # 1. BOTÃO EM CIMA PARA ADICIONAR NOVO ALUNO / AULA
         with st.expander("➕ Add New Student / Lesson Booking"):
             existing_teachers = sorted([t for t in df["Teacher"].unique() if t]) if not df.empty else []
             
@@ -345,7 +358,8 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
             with add_c2:
                 ins_teacher = st.selectbox("Teacher *", existing_teachers if existing_teachers else ["Select"], key="add_st_teacher")
 
-            auto_t_email = teacher_email_map.get(ins_teacher, f"{ins_teacher.lower().replace(' ', '.')}@park-is.com" if ins_teacher else "")
+            t_info = st.session_state.teacher_details_map.get(ins_teacher, {})
+            auto_t_email = t_info.get("school_email", f"{ins_teacher.lower().replace(' ', '.')}@park-is.com" if ins_teacher else "")
             avail_rooms = ROOM_OPTIONS.get(ins_campus, ROOM_OPTIONS["Other"])
             
             if ins_campus in INSTRUMENT_OPTIONS:
@@ -389,17 +403,17 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                                 "Lesson Duration": str(ins_dur), "Notes": "",
                                 "Parent Name": ins_p_name, "Parent Phone": ins_p_phone, "Parent Email": ins_p_email
                             }])
-                            try:
-                                conn.update(worksheet="DATABASE", data=pd.concat([df, new_r], ignore_index=True))
-                                st.success(f"✅ Aluno {ins_student} adicionado!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as ex:
-                                st.error(f"Erro ao salvar: {ex}")
+                            if not READ_ONLY_MODE:
+                                try:
+                                    conn.update(worksheet="DATABASE", data=pd.concat([df, new_r], ignore_index=True))
+                                    st.success(f"✅ Aluno {ins_student} adicionado ao Google Sheets!")
+                                except Exception as ex:
+                                    st.error(f"Erro ao salvar no Google Sheets: {ex}")
+                            else:
+                                st.success(f"✅ Aluno {ins_student} registado na app (Modo de Proteção Ativo).")
 
         st.markdown("---")
 
-        # 2. SELEÇÃO DE ALUNO E BOTÕES EDIT/DELETE NO CANTO SUPERIOR DIREITO
         if not df.empty and "Student" in df.columns:
             all_students = sorted([s for s in df["Student"].unique() if s])
             
@@ -407,9 +421,8 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
             with s_select_col:
                 selected_student_profile = st.selectbox("🔍 Select Student to View Profile:", all_students)
 
-            # BOTÕES EDIT E DELETE POSICIONADOS NO RETÂNGULO AZUL DA IMAGEM
             with btn_action_col:
-                st.write("") # Espaçamento para alinhar com a caixa de seleção
+                st.write("")
                 btn_edit_col, btn_del_col = st.columns(2)
                 with btn_edit_col:
                     toggle_edit = st.button("✏️ Edit", use_container_width=True)
@@ -420,10 +433,8 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 st_data = df[df["Student"] == selected_student_profile]
                 first_row = st_data.iloc[0]
 
-                # PAINEL DE EDIÇÃO INLINE (SE CLICADO EM EDIT)
                 if toggle_edit:
                     st.info(f"✏️ Editing details for {selected_student_profile}")
-                    idx_to_edit = st_data.index[0]
                     with st.form("form_inline_edit_student"):
                         e1, e2 = st.columns(2)
                         with e1:
@@ -439,28 +450,28 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                                 df.at[row_idx, "Parent Name"] = e_p_name
                                 df.at[row_idx, "Parent Email"] = e_p_email
                                 df.at[row_idx, "Parent Phone"] = e_p_phone
-                            try:
-                                conn.update(worksheet="DATABASE", data=df)
-                                st.success("✅ Dados atualizados!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as ex:
-                                st.error(f"Erro ao guardar: {ex}")
+                            if not READ_ONLY_MODE:
+                                try:
+                                    conn.update(worksheet="DATABASE", data=df)
+                                    st.success("✅ Dados atualizados no Google Sheets!")
+                                except Exception as ex:
+                                    st.error(f"Erro ao guardar: {ex}")
+                            else:
+                                st.success("✅ Dados do aluno atualizados na app (Modo de Proteção Ativo).")
 
-                # PAINEL DE ELIMINAÇÃO INLINE (SE CLICADO EM DELETE)
                 if toggle_delete:
-                    st.warning(f"⚠️ Quer mesmo eliminar o aluno {selected_student_profile} e todas as suas aulas?")
+                    st.warning(f"⚠️ Quer mesmo eliminar o aluno {selected_student_profile}?")
                     if st.button("🔴 Confirm Delete Student"):
-                        updated_df = df[df["Student"] != selected_student_profile]
-                        try:
-                            conn.update(worksheet="DATABASE", data=updated_df)
-                            st.success("✅ Aluno eliminado com sucesso!")
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as ex:
-                            st.error(f"Erro ao eliminar: {ex}")
+                        if not READ_ONLY_MODE:
+                            updated_df = df[df["Student"] != selected_student_profile]
+                            try:
+                                conn.update(worksheet="DATABASE", data=updated_df)
+                                st.success("✅ Aluno eliminado do Google Sheets!")
+                            except Exception as ex:
+                                st.error(f"Erro ao eliminar: {ex}")
+                        else:
+                            st.success("✅ Aluno removido na app (Modo de Proteção Ativo).")
 
-                # CARTÃO DE PERFIL DO ALUNO
                 p_col1, p_col2 = st.columns(2)
                 with p_col1:
                     st.info(f"### 👤 {selected_student_profile}")
@@ -484,33 +495,41 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 st.dataframe(profile_disp, use_container_width=True, hide_index=True)
 
     # -------------------------------------------------------------------------
-    # TAB 3: TEACHER PROFILE (COM BOTÃO + ADD EM CIMA E EDIT/DELETE À DIREITA)
+    # TAB 3: TEACHER PROFILE (COM INSTRUMENT, PERSONAL EMAIL E TELEPHONE)
     # -------------------------------------------------------------------------
     with tab3:
-        st.subheader("👨‍🏫 Teacher Profile & Timetable Details")
+        st.subheader("👨‍🏫 Teacher Profile & Contact Details")
 
-        # 1. BOTÃO EM CIMA PARA ADICIONAR NOVO PROFESSOR
+        # 1. ADICIONAR NOVO PROFESSOR
         with st.expander("➕ Add New Teacher"):
             with st.form("form_add_teacher_top"):
                 t_c1, t_c2 = st.columns(2)
                 with t_c1:
                     new_t_name = st.text_input("Teacher Full Name *")
+                    new_t_school_email = st.text_input("School Email *")
+                    new_t_instruments = st.text_input("Instrument(s) Taught (e.g. Piano, Guitar) *")
                 with t_c2:
-                    new_t_email = st.text_input("Teacher Official Email *")
+                    new_t_personal_email = st.text_input("Personal Email")
+                    new_t_phone = st.text_input("Telephone / Phone Number")
                 
                 if st.form_submit_button("💾 Save Teacher"):
-                    if new_t_name and new_t_email:
-                        teacher_email_map[new_t_name] = new_t_email
-                        st.success(f"✅ Professor '{new_t_name}' adicionado!")
+                    if new_t_name and new_t_school_email:
+                        st.session_state.teacher_details_map[new_t_name] = {
+                            "school_email": new_t_school_email,
+                            "personal_email": new_t_personal_email,
+                            "phone": new_t_phone,
+                            "instruments": new_t_instruments
+                        }
+                        st.success(f"✅ Professor '{new_t_name}' registado com sucesso!")
                     else:
                         st.warning("Preencha o nome e o email do professor.")
 
         st.markdown("---")
 
-        # 2. SELEÇÃO DE PROFESSOR E BOTÕES DE AÇÃO À DIREITA
-        if not df.empty and "Teacher" in df.columns:
-            all_teachers = sorted([t for t in df["Teacher"].unique() if t])
-            
+        # 2. SELEÇÃO E FICHA DO PROFESSOR
+        all_teachers = sorted(list(st.session_state.teacher_details_map.keys())) if st.session_state.teacher_details_map else sorted([t for t in df["Teacher"].unique() if t])
+        
+        if all_teachers:
             t_select_col, t_btn_col = st.columns([3, 1])
             with t_select_col:
                 selected_teacher_profile = st.selectbox("🔍 Select Teacher to View Profile:", all_teachers)
@@ -519,62 +538,94 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 st.write("")
                 tb_edit_col, tb_del_col = st.columns(2)
                 with tb_edit_col:
-                    t_toggle_edit = st.button("✏️ Edit Email", key="btn_t_edit", use_container_width=True)
+                    t_toggle_edit = st.button("✏️ Edit Profile", key="btn_t_edit", use_container_width=True)
                 with tb_del_col:
                     t_toggle_del = st.button("🗑️ Delete", key="btn_t_del", use_container_width=True)
 
             if selected_teacher_profile:
-                t_data = df[df["Teacher"] == selected_teacher_profile]
-                first_row = t_data.iloc[0]
-                current_t_email = teacher_email_map.get(selected_teacher_profile, first_row.get("Teacher Email", "-"))
+                t_data = df[df["Teacher"] == selected_teacher_profile] if not df.empty else pd.DataFrame()
+                first_row = t_data.iloc[0] if not t_data.empty else {}
+                
+                # Obter detalhes do professor do mapa em memória
+                t_info = st.session_state.teacher_details_map.get(selected_teacher_profile, {
+                    "school_email": first_row.get("Teacher Email", "-") if isinstance(first_row, pd.Series) else "-",
+                    "personal_email": first_row.get("Teacher Personal Email", "-") if isinstance(first_row, pd.Series) else "-",
+                    "phone": first_row.get("Teacher Phone", "-") if isinstance(first_row, pd.Series) else "-",
+                    "instruments": first_row.get("Teacher Taught Instruments", first_row.get("Instrument", "-") if isinstance(first_row, pd.Series) else "-")
+                })
 
-                # EDIÇÃO DE EMAIL INLINE
+                # FORMULÁRIO DE EDIÇÃO DAS INFORMAÇÕES DO PROFESSOR
                 if t_toggle_edit:
-                    with st.form("form_edit_t_email"):
-                        updated_t_email = st.text_input("New Teacher Email", value=current_t_email)
-                        if st.form_submit_button("🔄 Save Email"):
-                            teacher_email_map[selected_teacher_profile] = updated_t_email
-                            for row_idx in t_data.index:
-                                df.at[row_idx, "Teacher Email"] = updated_t_email
-                            try:
-                                conn.update(worksheet="DATABASE", data=df)
-                                st.success("✅ Email do professor atualizado!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as ex:
-                                st.error(f"Erro ao salvar: {ex}")
+                    with st.form("form_edit_t_profile"):
+                        e_t_c1, e_t_c2 = st.columns(2)
+                        with e_t_c1:
+                            u_school_email = st.text_input("School Email", value=t_info.get("school_email", ""))
+                            u_instruments = st.text_input("Instrument(s) Taught", value=t_info.get("instruments", ""))
+                        with e_t_c2:
+                            u_personal_email = st.text_input("Personal Email", value=t_info.get("personal_email", ""))
+                            u_phone = st.text_input("Telephone", value=t_info.get("phone", ""))
+                            
+                        if st.form_submit_button("🔄 Save Profile Changes"):
+                            st.session_state.teacher_details_map[selected_teacher_profile] = {
+                                "school_email": u_school_email,
+                                "personal_email": u_personal_email,
+                                "phone": u_phone,
+                                "instruments": u_instruments
+                            }
+                            
+                            # Atualiza a base de dados em memória
+                            if not t_data.empty:
+                                for row_idx in t_data.index:
+                                    df.at[row_idx, "Teacher Email"] = u_school_email
+                                    df.at[row_idx, "Teacher Personal Email"] = u_personal_email
+                                    df.at[row_idx, "Teacher Phone"] = u_phone
+                                    df.at[row_idx, "Teacher Taught Instruments"] = u_instruments
 
-                # ELIMINAÇÃO DE PROFESSOR INLINE
+                            if not READ_ONLY_MODE:
+                                try:
+                                    conn.update(worksheet="DATABASE", data=df)
+                                    st.success("✅ Ficha do professor guardada no Google Sheets!")
+                                except Exception as ex:
+                                    st.error(f"Erro ao salvar: {ex}")
+                            else:
+                                st.success("✅ Ficha do professor atualizada na app (Modo de Proteção Ativo).")
+
+                # ELIMINAÇÃO DE PROFESSOR
                 if t_toggle_del:
-                    st.warning(f"⚠️ Pretende remover o professor {selected_teacher_profile} do sistema?")
+                    st.warning(f"⚠️ Pretende remover o professor {selected_teacher_profile}?")
                     if st.button("🔴 Confirm Delete Teacher"):
-                        if selected_teacher_profile in teacher_email_map:
-                            del teacher_email_map[selected_teacher_profile]
-                        st.success(f"✅ Professor {selected_teacher_profile} removido da lista ativa!")
+                        if selected_teacher_profile in st.session_state.teacher_details_map:
+                            del st.session_state.teacher_details_map[selected_teacher_profile]
+                        st.success(f"✅ Professor {selected_teacher_profile} removido da app!")
 
+                # EXIBIÇÃO DA FICHA DO PROFESSOR COM NOVOS CAMPOS
                 tp_col1, tp_col2 = st.columns(2)
                 with tp_col1:
                     st.info(f"### 👨‍🏫 {selected_teacher_profile}")
-                    st.markdown(f"**Registered Email:** {current_t_email}")
-                    st.markdown(f"**Primary Campus:** {first_row.get('Campus', '-')}")
+                    st.markdown(f"🎸 **Instrument(s) Taught:** {t_info.get('instruments', '-')}")
+                    st.markdown(f"🏫 **Primary Campus:** {first_row.get('Campus', '-') if isinstance(first_row, pd.Series) else '-'}")
 
                 with tp_col2:
-                    st.success("### 📊 Teaching Summary")
-                    st.metric("Total Weekly Lessons", len(t_data))
-                    st.metric("Assigned Students", t_data["Student"].nunique())
+                    st.success("### 📞 Contact Details")
+                    st.markdown(f"✉️ **School Email:** {t_info.get('school_email', '-')}")
+                    st.markdown(f"📧 **Personal Email:** {t_info.get('personal_email', '-')}")
+                    st.markdown(f"📱 **Telephone:** {t_info.get('phone', '-')}")
 
                 st.markdown("---")
                 st.subheader("📅 Weekly Schedule")
                 
-                days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                for day_name in days_order:
-                    day_t = t_data[t_data["Day"] == day_name].copy()
-                    if not day_t.empty:
-                        st.markdown(f"##### 📅 {day_name.upper()}")
-                        day_t["Time"] = day_t.apply(format_time_range, axis=1)
-                        t_disp = day_t[["Time", "Student", "Grade", "Instrument", "Room", "Campus"]].copy()
-                        t_disp.columns = ["Time", "Student", "Class", "Instrument", "Room", "Campus"]
-                        st.dataframe(t_disp, use_container_width=True, hide_index=True)
+                if not t_data.empty:
+                    days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                    for day_name in days_order:
+                        day_t = t_data[t_data["Day"] == day_name].copy()
+                        if not day_t.empty:
+                            st.markdown(f"##### 📅 {day_name.upper()}")
+                            day_t["Time"] = day_t.apply(format_time_range, axis=1)
+                            t_disp = day_t[["Time", "Student", "Grade", "Instrument", "Room", "Campus"]].copy()
+                            t_disp.columns = ["Time", "Student", "Class", "Instrument", "Room", "Campus"]
+                            st.dataframe(t_disp, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No scheduled lessons for this teacher.")
 
 # -----------------------------------------------------------------------------
 # 7. TIER 2: SCHOOL COORDINATOR PORTAL
