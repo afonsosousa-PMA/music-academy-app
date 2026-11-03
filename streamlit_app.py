@@ -78,7 +78,7 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 3. DICIONÁRIOS DE SALAS E INSTRUMENTOS POR CAMPUS
+# 3. DICIONÁRIOS DE REGRA (SALAS, INSTRUMENTOS E EMAILS DOS PROFESSORES)
 # -----------------------------------------------------------------------------
 ROOM_OPTIONS = {
     "Alfragide": [
@@ -95,11 +95,19 @@ INSTRUMENT_OPTIONS = {
     "PdE": ["Guitar", "Piano", "Violin", "Music Initiation", "Music Atelier"]
 }
 
+# Mapa de emails de professores existente
+teacher_email_map = {}
+if not df.empty and "Teacher" in df.columns and "Teacher Email" in df.columns:
+    for _, r in df.iterrows():
+        t_name = r.get("Teacher", "").strip()
+        t_email = r.get("Teacher Email", "").strip()
+        if t_name and t_email and t_name not in teacher_email_map:
+            teacher_email_map[t_name] = t_email
+
 # -----------------------------------------------------------------------------
 # 4. AUXILIARES, MÉTRICAS E FORMATADORES AUTOMÁTICOS
 # -----------------------------------------------------------------------------
 def calculate_end_time(start_time_str, duration_minutes):
-    """Calcula automaticamente a hora de fim a partir da hora de início e duração."""
     try:
         start_dt = datetime.strptime(start_time_str.strip(), "%H:%M")
         end_dt = start_dt + timedelta(minutes=int(duration_minutes))
@@ -169,15 +177,6 @@ def check_room_conflict(data, campus, day, room, start_time, exclude_idx=None):
         return True, f"A sala '{room}' no campus '{campus}' ({day} às {start_time}) já está ocupada por {teacher} com o aluno {student}."
     
     return False, ""
-
-# Mapeamento seguro de emails de professores
-teacher_email_map = {}
-if not df.empty and "Teacher" in df.columns and "Teacher Email" in df.columns:
-    for _, r in df.iterrows():
-        t_name = r.get("Teacher", "").strip()
-        t_email = r.get("Teacher Email", "").strip()
-        if t_name and t_email and t_name not in teacher_email_map:
-            teacher_email_map[t_name] = t_email
 
 # -----------------------------------------------------------------------------
 # 5. BARRA LATERAL: LOGIN COM PIN & DEV MODE
@@ -278,20 +277,19 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📅 General Schedule & Filters", 
+    # NOVO MENU ORGANIZADO CONFORME PEDIDO
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📅 General Schedule", 
         "📋 Student Profile",
-        "📞 Parent Contact Directory", 
-        "➕ Add New Booking / Record", 
-        "✏️ Edit / Update Existing Records",
-        "🗑️ Delete / Cancel Booking"
+        "➕ Add New Record",
+        "✏️ Edit / Delete Record"
     ])
 
-    # TAB 1: General Schedule View
+    # TAB 1: GENERAL SCHEDULE (VISÃO SEMANAL LADO A LADO 2ª A 6ª FEIRA ESTILO EXCEL)
     with tab1:
-        st.subheader("Master Schedule Overview")
+        st.subheader("Master Schedule Overview (Weekly Grid View)")
         if not df.empty:
-            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+            f_col1, f_col2, f_col3 = st.columns(3)
             with f_col1:
                 campus_opts = ["All Campuses"] + sorted([c for c in df["Campus"].unique() if c])
                 campus_filter = st.selectbox("Campus Filter:", campus_opts)
@@ -299,9 +297,6 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 teacher_opts = ["All Teachers"] + sorted([t for t in df["Teacher"].unique() if t])
                 teacher_filter = st.selectbox("Teacher Filter:", teacher_opts)
             with f_col3:
-                day_opts = ["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                day_filter = st.selectbox("Day Filter:", day_opts)
-            with f_col4:
                 grade_opts = ["All Grades", "Early Learning", "Junior School", "Senior School"]
                 grade_filter = st.selectbox("Grade Filter:", grade_opts)
 
@@ -310,15 +305,13 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 filtered_df = filtered_df[filtered_df["Campus"] == campus_filter]
             if teacher_filter != "All Teachers":
                 filtered_df = filtered_df[filtered_df["Teacher"] == teacher_filter]
-            if day_filter != "All Days":
-                filtered_df = filtered_df[filtered_df["Day"] == day_filter]
             if grade_filter != "All Grades":
                 filtered_df = filtered_df[filtered_df["Grade"].apply(get_grade_category) == grade_filter]
 
             if not filtered_df.empty:
                 csv_data = filtered_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="📥 Export Filtered Schedule to CSV",
+                    label="📥 Export Schedule to CSV",
                     data=csv_data,
                     file_name="master_schedule_export.csv",
                     mime="text/csv"
@@ -328,26 +321,37 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 for teacher in teachers_in_view:
                     if not teacher:
                         continue
-                    st.markdown(f"### 👨‍🏫 {teacher}")
+                    st.markdown(f"## 👨‍🏫 {teacher.upper()}")
                     t_df = filtered_df[filtered_df["Teacher"] == teacher]
-                    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                     
-                    for day in days:
-                        d_df = t_df[t_df["Day"] == day].copy()
-                        if not d_df.empty:
-                            st.markdown(f"#### 📅 {day.upper()}")
-                            d_df["Time"] = d_df.apply(format_time_range, axis=1)
-                            disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Inst. Year", "Level", "Room", "Campus"]].copy()
-                            disp_df.columns = ["Time", "Student", "Class", "Instrument", "Inst. Year", "Level", "Room", "Campus"]
-                            st.dataframe(disp_df, use_container_width=True, hide_index=True)
+                    # Layout em colunas de 2ª a 6ª Feira lado a lado
+                    col_mon, col_tue, col_wed, col_thu, col_fri = st.columns(5)
+                    
+                    days_map = [
+                        ("Monday", col_mon), ("Tuesday", col_tue), 
+                        ("Wednesday", col_wed), ("Thursday", col_thu), ("Friday", col_fri)
+                    ]
+                    
+                    for day_name, col_obj in days_map:
+                        with col_obj:
+                            st.markdown(f"##### 📅 {day_name.upper()}")
+                            d_df = t_df[t_df["Day"] == day_name].copy()
+                            if not d_df.empty:
+                                d_df["Time"] = d_df.apply(format_time_range, axis=1)
+                                disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Room"]].copy()
+                                disp_df.columns = ["Time", "Student", "Class", "Inst.", "Room"]
+                                st.dataframe(disp_df, use_container_width=True, hide_index=True)
+                            else:
+                                st.caption("No lessons")
+                    st.markdown("---")
             else:
                 st.info("No lessons found matching the selected filters.")
         else:
             st.info("No schedule data loaded.")
 
-    # TAB 2: FICHA DO ALUNO (STUDENT PROFILE)
+    # TAB 2: STUDENT PROFILE (FICHA COMPLETA DO ALUNO + CONTACTOS DOS PAIS)
     with tab2:
-        st.subheader("📋 Student Profile & Academic Details")
+        st.subheader("📋 Student Profile & Contact Details")
         if not df.empty and "Student" in df.columns:
             all_students = sorted([s for s in df["Student"].unique() if s])
             selected_student_profile = st.selectbox("🔍 Select Student to View Profile:", all_students)
@@ -378,37 +382,21 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 profile_disp.columns = ["Day", "Time", "Instrument", "Year", "Teacher", "Room", "Campus", "Notes"]
                 st.dataframe(profile_disp, use_container_width=True, hide_index=True)
 
-    # TAB 3: Parent Contacts
+    # TAB 3: ADD NEW RECORD (DURAÇÕES REGRADAS E EMAIL DO PROFESSOR DEDICADO)
     with tab3:
-        st.subheader("Parent & Guardian Directory")
-        contact_cols = [c for c in ["Student", "Grade", "Campus", "Parent Name", "Parent Email", "Parent Phone"] if c in df.columns]
-        if contact_cols:
-            csv_contacts = df[contact_cols].to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Export Parent Directory to CSV",
-                data=csv_contacts,
-                file_name="parent_directory_export.csv",
-                mime="text/csv"
-            )
-            st.dataframe(df[contact_cols], use_container_width=True, hide_index=True)
-
-    # TAB 4: ADD NEW RECORDS (EMAIL AUTOMÁTICO DO PROFESSOR E INSTRUMENTOS RESTRITOS)
-    with tab4:
         st.subheader("➕ Add New Schedule / Student Record")
         
         existing_teachers = sorted([t for t in df["Teacher"].unique() if t]) if not df.empty else []
 
-        # Seleção Dinâmica de Campus e Professor FORA do formulário para auto-preenchimento
         sc1, sc2 = st.columns(2)
         with sc1:
             new_campus = st.selectbox("Campus *", ["Alfragide", "PdE", "Restelo", "Other"], key="add_campus_select")
         with sc2:
             new_teacher = st.selectbox("Teacher Name *", existing_teachers if existing_teachers else ["Select Teacher"], key="add_teacher_select")
 
-        # Obter email automático do professor
+        # Gestão de emails de professores (Permite introduzir novo se não existir)
         auto_teacher_email = teacher_email_map.get(new_teacher, f"{new_teacher.lower().replace(' ', '.')}@park-is.com" if new_teacher else "")
 
-        # Definir salas e instrumentos disponíveis de acordo com o campus selecionado
         available_rooms = ROOM_OPTIONS.get(new_campus, ROOM_OPTIONS["Other"])
         
         if new_campus in INSTRUMENT_OPTIONS:
@@ -427,11 +415,20 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
             with c2:
                 new_day = st.selectbox("Day *", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"])
                 new_start = st.text_input("Start Time (HH:MM) *", value="14:00")
-                new_duration = st.selectbox("Duration (min) *", [30, 45, 60])
                 new_room = st.selectbox("Room / Studio *", available_rooms)
 
             with c3:
                 new_instrument = st.selectbox("Instrument *", available_instruments)
+                
+                # Regras Automáticas de Duração de Aula
+                if new_instrument in ["Music Initiation", "Music Atelier"]:
+                    duration_options = [45]
+                elif new_campus in ["PdE", "Restelo"]:
+                    duration_options = [30]
+                else:
+                    duration_options = [30, 45, 60]
+
+                new_duration = st.selectbox("Duration (min) *", duration_options)
                 new_inst_year = st.text_input("Instrument Year", value="1st")
                 new_notes = st.text_input("Notes (e.g. 30+30)", value="")
                 new_parent_name = st.text_input("Parent / Guardian Name")
@@ -461,54 +458,64 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                         updated_df = pd.concat([df, new_row], ignore_index=True)
                         try:
                             conn.update(worksheet="DATABASE", data=updated_df)
-                            st.success(f"✅ Record for {new_student} added successfully! (End Time calculated: {computed_end_time})")
+                            st.success(f"✅ Record for {new_student} added successfully! (End Time: {computed_end_time})")
                             st.cache_data.clear()
                         except Exception as ex:
                             st.error(f"Failed to update data source: {ex}")
 
-    # TAB 5: EDIT EXISTING RECORDS
-    with tab5:
-        st.subheader("✏️ Edit / Modify Existing Record")
+    # TAB 4: EDIT / DELETE RECORD (UNIFICADO E COMPACTO)
+    with tab4:
+        st.subheader("✏️ Edit or 🗑️ Delete Existing Record")
         if not df.empty and "Student" in df.columns:
-            student_list = [s for s in df["Student"].unique() if s]
-            if student_list:
-                selected_student = st.selectbox("Select Student to Edit", student_list)
-                student_rows = df[df["Student"] == selected_student]
-                if not student_rows.empty:
-                    idx = student_rows.index[0]
-                    row_data = df.loc[idx]
+            df["Booking_Label"] = df["Student"] + " | " + df["Instrument"] + " | " + df["Campus"] + " | " + df["Day"] + " (" + df["Start Time"] + ")"
+            booking_opts = df["Booking_Label"].tolist()
+            
+            selected_booking = st.selectbox("Selecione a Aula para Editar ou Eliminar:", booking_opts)
+            
+            if selected_booking:
+                idx = df[df["Booking_Label"] == selected_booking].index[0]
+                row_data = df.loc[idx]
 
-                    existing_teachers = sorted([t for t in df["Teacher"].unique() if t])
-                    
+                st.markdown("---")
+                action_col1, action_col2 = st.columns(2)
+                
+                with action_col1:
+                    st.markdown("#### ✏️ Edit Details")
                     with st.form("edit_record_form"):
-                        e1, e2 = st.columns(2)
-                        with e1:
-                            edit_campus = st.selectbox("Campus", ["Alfragide", "PdE", "Restelo", "Other"], index=["Alfragide", "PdE", "Restelo", "Other"].index(row_data.get("Campus", "Alfragide")) if row_data.get("Campus") in ["Alfragide", "PdE", "Restelo", "Other"] else 0)
-                            edit_teacher = st.selectbox("Teacher", existing_teachers, index=existing_teachers.index(row_data.get("Teacher")) if row_data.get("Teacher") in existing_teachers else 0)
-                            edit_teacher_email = st.text_input("Teacher Email", value=str(row_data.get("Teacher Email", teacher_email_map.get(row_data.get("Teacher"), ""))))
-                            edit_day = st.selectbox("Day", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].index(row_data.get("Day", "Monday")) if row_data.get("Day") in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] else 0)
-                            edit_start = st.text_input("Start Time (HH:MM)", value=str(row_data.get("Start Time", "")))
-                            edit_duration = st.selectbox("Duration (min)", [30, 45, 60], index=[30, 45, 60].index(int(row_data.get("Lesson Duration", 30))) if str(row_data.get("Lesson Duration")).isdigit() and int(row_data.get("Lesson Duration")) in [30, 45, 60] else 0)
-                            
-                            current_rooms = ROOM_OPTIONS.get(edit_campus, ROOM_OPTIONS["Other"])
-                            edit_room = st.selectbox("Room", current_rooms, index=current_rooms.index(row_data.get("Room")) if row_data.get("Room") in current_rooms else 0)
+                        existing_teachers = sorted([t for t in df["Teacher"].unique() if t])
+                        
+                        edit_campus = st.selectbox("Campus", ["Alfragide", "PdE", "Restelo", "Other"], index=["Alfragide", "PdE", "Restelo", "Other"].index(row_data.get("Campus", "Alfragide")) if row_data.get("Campus") in ["Alfragide", "PdE", "Restelo", "Other"] else 0)
+                        edit_teacher = st.selectbox("Teacher", existing_teachers, index=existing_teachers.index(row_data.get("Teacher")) if row_data.get("Teacher") in existing_teachers else 0)
+                        edit_teacher_email = st.text_input("Teacher Email", value=str(row_data.get("Teacher Email", teacher_email_map.get(row_data.get("Teacher"), ""))))
+                        edit_day = st.selectbox("Day", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], index=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].index(row_data.get("Day", "Monday")) if row_data.get("Day") in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] else 0)
+                        edit_start = st.text_input("Start Time (HH:MM)", value=str(row_data.get("Start Time", "")))
+                        
+                        current_rooms = ROOM_OPTIONS.get(edit_campus, ROOM_OPTIONS["Other"])
+                        edit_room = st.selectbox("Room", current_rooms, index=current_rooms.index(row_data.get("Room")) if row_data.get("Room") in current_rooms else 0)
 
-                        with e2:
-                            if edit_campus in INSTRUMENT_OPTIONS:
-                                edit_inst_opts = INSTRUMENT_OPTIONS[edit_campus]
-                            else:
-                                edit_inst_opts = sorted([i for i in df["Instrument"].unique() if i and "therapy" not in i.lower()])
-                            
-                            current_inst = row_data.get("Instrument", "")
-                            edit_instrument = st.selectbox("Instrument", edit_inst_opts, index=edit_inst_opts.index(current_inst) if current_inst in edit_inst_opts else 0)
-                            
-                            edit_grade = st.text_input("Grade", value=str(row_data.get("Grade", "")))
-                            edit_notes = st.text_input("Notes", value=str(row_data.get("Notes", "")))
-                            edit_parent_name = st.text_input("Parent Name", value=str(row_data.get("Parent Name", "")))
-                            edit_parent_phone = st.text_input("Parent Phone", value=str(row_data.get("Parent Phone", "")))
-                            edit_parent_email = st.text_input("Parent Email", value=str(row_data.get("Parent Email", "")))
+                        if edit_campus in INSTRUMENT_OPTIONS:
+                            edit_inst_opts = INSTRUMENT_OPTIONS[edit_campus]
+                        else:
+                            edit_inst_opts = sorted([i for i in df["Instrument"].unique() if i and "therapy" not in i.lower()])
+                        
+                        current_inst = row_data.get("Instrument", "")
+                        edit_instrument = st.selectbox("Instrument", edit_inst_opts, index=edit_inst_opts.index(current_inst) if current_inst in edit_inst_opts else 0)
+                        
+                        if edit_instrument in ["Music Initiation", "Music Atelier"]:
+                            edit_dur_opts = [45]
+                        elif edit_campus in ["PdE", "Restelo"]:
+                            edit_dur_opts = [30]
+                        else:
+                            edit_dur_opts = [30, 45, 60]
 
-                        submit_edit = st.form_submit_button("🔄 Update Record")
+                        edit_duration = st.selectbox("Duration (min)", edit_dur_opts)
+                        edit_grade = st.text_input("Grade", value=str(row_data.get("Grade", "")))
+                        edit_notes = st.text_input("Notes", value=str(row_data.get("Notes", "")))
+                        edit_parent_name = st.text_input("Parent Name", value=str(row_data.get("Parent Name", "")))
+                        edit_parent_phone = st.text_input("Parent Phone", value=str(row_data.get("Parent Phone", "")))
+                        edit_parent_email = st.text_input("Parent Email", value=str(row_data.get("Parent Email", "")))
+
+                        submit_edit = st.form_submit_button("🔄 Save Changes")
 
                         if submit_edit:
                             has_conflict, msg = check_room_conflict(df, edit_campus, edit_day, edit_room, edit_start, exclude_idx=idx)
@@ -532,33 +539,25 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                                 df.at[idx, "Parent Email"] = edit_parent_email
 
                                 try:
-                                    conn.update(worksheet="DATABASE", data=df)
-                                    st.success(f"✅ Record for {selected_student} updated!")
+                                    conn.update(worksheet="DATABASE", data=df.drop(columns=["Booking_Label"], errors="ignore"))
+                                    st.success(f"✅ Record for {row_data.get('Student')} updated!")
                                     st.cache_data.clear()
+                                    st.rerun()
                                 except Exception as ex:
                                     st.error(f"Failed to update data source: {ex}")
 
-    # TAB 6: DELETE / CANCEL BOOKING
-    with tab6:
-        st.subheader("🗑️ Cancel / Remove Lesson Booking")
-        st.warning("⚠️ Esta ação irá remover permanentemente a aula selecionada.")
-        if not df.empty and "Student" in df.columns:
-            df["Booking_Label"] = df["Student"] + " | " + df["Instrument"] + " | " + df["Campus"] + " | " + df["Day"] + " (" + df["Start Time"] + ")"
-            booking_opts = df["Booking_Label"].tolist()
-            
-            selected_booking = st.selectbox("Selecione a Aula a Cancelar:", booking_opts)
-            
-            if st.button("🔴 Eliminar Aula Selecionada"):
-                delete_idx = df[df["Booking_Label"] == selected_booking].index
-                if not delete_idx.empty:
-                    updated_df = df.drop(delete_idx[0]).drop(columns=["Booking_Label"], errors="ignore")
-                    try:
-                        conn.update(worksheet="DATABASE", data=updated_df)
-                        st.success(f"✅ Aula cancelada e removida com sucesso!")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"Falha ao eliminar a aula: {ex}")
+                with action_col2:
+                    st.markdown("#### 🗑️ Delete Booking")
+                    st.warning("⚠️ Esta ação irá apagar a aula permanentemente.")
+                    if st.button("🔴 Delete This Booking"):
+                        updated_df = df.drop(idx).drop(columns=["Booking_Label"], errors="ignore")
+                        try:
+                            conn.update(worksheet="DATABASE", data=updated_df)
+                            st.success("✅ Aula eliminada com sucesso!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"Falha ao eliminar a aula: {ex}")
 
 # -----------------------------------------------------------------------------
 # 7. TIER 2: SCHOOL COORDINATOR PORTAL
