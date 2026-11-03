@@ -276,17 +276,18 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    # MENU ORGANIZADO
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # SEPARADORES ATUALIZADOS COM TEACHER PROFILE
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📅 General Schedule", 
         "📋 Student Profile",
+        "👨‍🏫 Teacher Profile",
         "➕ Add New Record",
         "✏️ Edit / Delete Record"
     ])
 
-    # TAB 1: GENERAL SCHEDULE (VISÃO COMPLETA ESTILO EXCEL - LARGURA TOTAL SEM CORTAR NOMES)
+    # TAB 1: GENERAL SCHEDULE (ORGANIZADO PRIMEIRO POR DIA DA SEMANA ESTILO EXCEL)
     with tab1:
-        st.subheader("Master Schedule Overview")
+        st.subheader("Master Schedule Overview (Weekly Order)")
         if not df.empty:
             f_col1, f_col2, f_col3, f_col4 = st.columns(4)
             with f_col1:
@@ -321,26 +322,26 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                     mime="text/csv"
                 )
 
-                teachers_in_view = filtered_df["Teacher"].unique()
-                days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                 
-                for teacher in teachers_in_view:
-                    if not teacher:
-                        continue
-                    
-                    st.markdown(f"## 👨‍🏫 {teacher.upper()}")
-                    t_df = filtered_df[filtered_df["Teacher"] == teacher]
-                    
-                    # Blocos por dia em largura completa para mostrar todas as colunas sem cortar nomes
-                    for day_name in days:
-                        d_df = t_df[t_df["Day"] == day_name].copy()
-                        if not d_df.empty:
-                            st.markdown(f"#### 📅 {day_name.upper()}")
-                            d_df["Time"] = d_df.apply(format_time_range, axis=1)
-                            disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Inst. Year", "Level", "Room", "Campus"]].copy()
+                # Agrupamento principal por DIA DA SEMANA
+                for day_name in days_order:
+                    day_data = filtered_df[filtered_df["Day"] == day_name]
+                    if not day_data.empty:
+                        st.markdown(f"# 📅 {day_name.upper()}")
+                        teachers_in_day = day_data["Teacher"].unique()
+                        
+                        for teacher in teachers_in_day:
+                            if not teacher:
+                                continue
+                            
+                            t_day_df = day_data[day_data["Teacher"] == teacher].copy()
+                            st.markdown(f"### 👨‍🏫 {teacher}")
+                            
+                            t_day_df["Time"] = t_day_df.apply(format_time_range, axis=1)
+                            disp_df = t_day_df[["Time", "Student", "Grade", "Instrument", "Inst. Year", "Level", "Room", "Campus"]].copy()
                             disp_df.columns = ["Time", "Student", "Class", "Instrument", "Inst. Year", "Level", "Room", "Campus"]
                             
-                            # Configuração explícita de largura de colunas para impedir nomes cortados
                             st.dataframe(
                                 disp_df, 
                                 use_container_width=True, 
@@ -356,7 +357,7 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                                     "Campus": st.column_config.TextColumn("Campus", width="medium"),
                                 }
                             )
-                    st.markdown("---")
+                        st.markdown("---")
             else:
                 st.info("No lessons found matching the selected filters.")
         else:
@@ -395,8 +396,44 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 profile_disp.columns = ["Day", "Time", "Instrument", "Year", "Teacher", "Room", "Campus", "Notes"]
                 st.dataframe(profile_disp, use_container_width=True, hide_index=True)
 
-    # TAB 3: ADD NEW RECORD
+    # TAB 3: NOVO SEPARADOR - TEACHER PROFILE
     with tab3:
+        st.subheader("👨‍🏫 Teacher Profile & Timetable Overview")
+        if not df.empty and "Teacher" in df.columns:
+            all_teachers = sorted([t for t in df["Teacher"].unique() if t])
+            selected_teacher_profile = st.selectbox("🔍 Select Teacher to View Profile:", all_teachers)
+
+            if selected_teacher_profile:
+                t_data = df[df["Teacher"] == selected_teacher_profile]
+                first_row = t_data.iloc[0]
+                t_email = teacher_email_map.get(selected_teacher_profile, first_row.get("Teacher Email", "-"))
+
+                tp_col1, tp_col2 = st.columns(2)
+                with tp_col1:
+                    st.info(f"### 👨‍🏫 {selected_teacher_profile}")
+                    st.markdown(f"**Registered Email:** {t_email}")
+                    st.markdown(f"**Primary Campus:** {first_row.get('Campus', '-')}")
+
+                with tp_col2:
+                    st.success("### 📊 Teaching Summary")
+                    st.metric("Total Weekly Lessons", len(t_data))
+                    st.metric("Assigned Students", t_data["Student"].nunique())
+
+                st.markdown("---")
+                st.subheader("📅 Weekly Schedule")
+                
+                days_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                for day_name in days_order:
+                    day_t = t_data[t_data["Day"] == day_name].copy()
+                    if not day_t.empty:
+                        st.markdown(f"##### 📅 {day_name.upper()}")
+                        day_t["Time"] = day_t.apply(format_time_range, axis=1)
+                        t_disp = day_t[["Time", "Student", "Grade", "Instrument", "Room", "Campus"]].copy()
+                        t_disp.columns = ["Time", "Student", "Class", "Instrument", "Room", "Campus"]
+                        st.dataframe(t_disp, use_container_width=True, hide_index=True)
+
+    # TAB 4: ADD NEW RECORD
+    with tab4:
         st.subheader("➕ Add New Schedule / Student Record")
         
         existing_teachers = sorted([t for t in df["Teacher"].unique() if t]) if not df.empty else []
@@ -474,9 +511,35 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                         except Exception as ex:
                             st.error(f"Failed to update data source: {ex}")
 
-    # TAB 4: EDIT / DELETE RECORD
-    with tab4:
+    # TAB 5: EDIT / DELETE RECORD + GESTÃO DE PROFESSORES
+    with tab5:
         st.subheader("✏️ Edit or 🗑️ Delete Existing Record")
+        
+        # Secção de Gestão de Professores
+        with st.expander("👨‍🏫 Manage Teachers Directory (Add / Edit / Remove Teacher)"):
+            t_col1, t_col2 = st.columns(2)
+            with t_col1:
+                st.markdown("##### ➕ Add / Update Teacher")
+                add_t_name = st.text_input("Teacher Full Name")
+                add_t_email = st.text_input("Teacher Official Email")
+                if st.button("💾 Save Teacher Info"):
+                    if add_t_name and add_t_email:
+                        teacher_email_map[add_t_name] = add_t_email
+                        st.success(f"✅ Teacher '{add_t_name}' linked to email '{add_t_email}'!")
+                    else:
+                        st.warning("Please fill in both Teacher Name and Email.")
+            
+            with t_col2:
+                st.markdown("##### 🗑️ Remove Teacher")
+                existing_teachers_list = sorted(list(teacher_email_map.keys()))
+                rem_t_name = st.selectbox("Select Teacher to Remove", ["Select"] + existing_teachers_list)
+                if st.button("🔴 Remove Teacher"):
+                    if rem_t_name in teacher_email_map:
+                        del teacher_email_map[rem_t_name]
+                        st.success(f"✅ Teacher '{rem_t_name}' removed from active list.")
+
+        st.markdown("---")
+
         if not df.empty and "Student" in df.columns:
             df["Booking_Label"] = df["Student"] + " | " + df["Instrument"] + " | " + df["Campus"] + " | " + df["Day"] + " (" + df["Start Time"] + ")"
             booking_opts = df["Booking_Label"].tolist()
