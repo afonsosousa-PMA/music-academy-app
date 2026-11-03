@@ -18,7 +18,6 @@ st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 # -----------------------------------------------------------------------------
 # 1. GESTÃO DE SESSÃO E AUTO-LOGOUT (SEGURANÇA RGPD)
 # -----------------------------------------------------------------------------
-# Tempo limite de inatividade em segundos (ex: 900 segundos = 15 minutos)
 INACTIVITY_TIMEOUT = 900 
 
 if "authenticated" not in st.session_state:
@@ -30,7 +29,6 @@ if "user_email" not in st.session_state:
 if "last_activity" not in st.session_state:
     st.session_state.last_activity = time.time()
 
-# Verificar timeout de inatividade
 if st.session_state.authenticated:
     if time.time() - st.session_state.last_activity > INACTIVITY_TIMEOUT:
         st.session_state.authenticated = False
@@ -79,8 +77,18 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 3. FUNÇÕES AUXILIARES E CATEGORIZAÇÃO
+# 3. AUXILIARES, MÉTRICAS E FORMATADORES
 # -----------------------------------------------------------------------------
+def format_time_range(row):
+    """Garante que a coluna Time seja sempre construída com Start e End Time seguros."""
+    start = str(row.get("Start Time", "")).strip()
+    end = str(row.get("End Time", "")).strip()
+    if start and end:
+        return f"{start} - {end}"
+    elif start:
+        return start
+    return ""
+
 def get_grade_category(grade_str):
     if not grade_str:
         return "Other"
@@ -108,12 +116,33 @@ def calculate_unique_students(data):
         return 0
     return data["Student"].nunique()
 
+def check_room_conflict(data, campus, day, room, start_time, exclude_idx=None):
+    if data.empty:
+        return False, ""
+    
+    query = data[
+        (data["Campus"].str.lower() == campus.lower()) &
+        (data["Day"].str.lower() == day.lower()) &
+        (data["Room"].str.lower() == room.lower()) &
+        (data["Start Time"] == start_time)
+    ]
+    
+    if exclude_idx is not None and not query.empty:
+        query = query[query.index != exclude_idx]
+        
+    if not query.empty:
+        row = query.iloc[0]
+        teacher = row.get("Teacher", "Outro Professor")
+        student = row.get("Student", "Outro Aluno")
+        return True, f"A sala '{room}' no campus '{campus}' ({day} às {start_time}) já está ocupada por {teacher} com o aluno {student}."
+    
+    return False, ""
+
 # -----------------------------------------------------------------------------
-# 4. BARRA LATERAL: LOGIN COM PIN & DEV MODE (MODO CONSTRUTOR)
+# 4. BARRA LATERAL: LOGIN COM PIN & DEV MODE
 # -----------------------------------------------------------------------------
 st.sidebar.title("🔐 Portal Security Login")
 
-# MODO DE DESENVOLVIMENTO (Acesso Rápido para o Coordenador da Academia)
 dev_mode = st.sidebar.checkbox("🛠️ Developer / Easy Access Mode", value=True)
 
 if dev_mode:
@@ -133,7 +162,6 @@ else:
         input_pin = st.sidebar.text_input("Código / PIN de Acesso", type="password")
 
         if st.sidebar.button("🔑 Entrar no Portal"):
-            # Validação simples de PIN por perfil
             valid_login = False
             if selected_role == "Academy Coordinator" and input_pin == "9999":
                 valid_login = True
@@ -209,14 +237,15 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📅 General Schedule & Filters", 
         "📞 Parent Contact Directory", 
         "➕ Add New Booking / Record", 
-        "✏️ Edit / Update Existing Records"
+        "✏️ Edit / Update Existing Records",
+        "🗑️ Delete / Cancel Booking"
     ])
 
-    # TAB 1: General Schedule View
+    # TAB 1: General Schedule View & Export (Com Formatação Segura de Horas)
     with tab1:
         st.subheader("Master Schedule Overview")
         if not df.empty:
@@ -245,6 +274,14 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 filtered_df = filtered_df[filtered_df["Grade"].apply(get_grade_category) == grade_filter]
 
             if not filtered_df.empty:
+                csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Export Filtered Schedule to CSV",
+                    data=csv_data,
+                    file_name="master_schedule_export.csv",
+                    mime="text/csv"
+                )
+
                 teachers_in_view = filtered_df["Teacher"].unique()
                 for teacher in teachers_in_view:
                     if not teacher:
@@ -254,10 +291,11 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                     
                     for day in days:
-                        d_df = t_df[t_df["Day"] == day]
+                        d_df = t_df[t_df["Day"] == day].copy()
                         if not d_df.empty:
                             st.markdown(f"#### 📅 {day.upper()}")
-                            d_df["Time"] = d_df["Start Time"] + " - " + d_df["End Time"]
+                            # Formatação corrigida do horário
+                            d_df["Time"] = d_df.apply(format_time_range, axis=1)
                             disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Inst. Year", "Level", "Room", "Campus"]].copy()
                             disp_df.columns = ["Time", "Student", "Class", "Instrument", "Inst. Year", "Level", "Room", "Campus"]
                             st.dataframe(disp_df, use_container_width=True, hide_index=True)
@@ -266,11 +304,18 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
         else:
             st.info("No schedule data loaded.")
 
-    # TAB 2: Parent Contacts
+    # TAB 2: Parent Contacts & Export
     with tab2:
         st.subheader("Parent & Guardian Directory")
         contact_cols = [c for c in ["Student", "Grade", "Campus", "Parent Name", "Parent Email", "Parent Phone"] if c in df.columns]
         if contact_cols:
+            csv_contacts = df[contact_cols].to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Export Parent Directory to CSV",
+                data=csv_contacts,
+                file_name="parent_directory_export.csv",
+                mime="text/csv"
+            )
             st.dataframe(df[contact_cols], use_container_width=True, hide_index=True)
 
     # TAB 3: Add New Records
@@ -306,21 +351,25 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                 if not new_student or not new_teacher or not new_room:
                     st.warning("Please fill in all required fields marked with *.")
                 else:
-                    new_row = pd.DataFrame([{
-                        "Campus": new_campus, "Teacher": new_teacher, "Teacher Email": new_teacher_email,
-                        "Day": new_day, "Start Time": new_start, "End Time": new_end,
-                        "Student": new_student, "Grade": new_grade, "Instrument": new_instrument,
-                        "Inst. Year": new_inst_year, "Level": "0", "Room": new_room,
-                        "Lesson Duration": str(new_duration), "Notes": new_notes,
-                        "Parent Name": new_parent_name, "Parent Phone": new_parent_phone, "Parent Email": new_parent_email
-                    }])
-                    updated_df = pd.concat([df, new_row], ignore_index=True)
-                    try:
-                        conn.update(worksheet="DATABASE", data=updated_df)
-                        st.success(f"✅ Record for {new_student} added successfully!")
-                        st.cache_data.clear()
-                    except Exception as ex:
-                        st.error(f"Failed to update data source: {ex}")
+                    has_conflict, msg = check_room_conflict(df, new_campus, new_day, new_room, new_start)
+                    if has_conflict:
+                        st.error(f"⛔ AGENDAMENTO BLOQUEADO: {msg}")
+                    else:
+                        new_row = pd.DataFrame([{
+                            "Campus": new_campus, "Teacher": new_teacher, "Teacher Email": new_teacher_email,
+                            "Day": new_day, "Start Time": new_start, "End Time": new_end,
+                            "Student": new_student, "Grade": new_grade, "Instrument": new_instrument,
+                            "Inst. Year": new_inst_year, "Level": "0", "Room": new_room,
+                            "Lesson Duration": str(new_duration), "Notes": new_notes,
+                            "Parent Name": new_parent_name, "Parent Phone": new_parent_phone, "Parent Email": new_parent_email
+                        }])
+                        updated_df = pd.concat([df, new_row], ignore_index=True)
+                        try:
+                            conn.update(worksheet="DATABASE", data=updated_df)
+                            st.success(f"✅ Record for {new_student} added successfully!")
+                            st.cache_data.clear()
+                        except Exception as ex:
+                            st.error(f"Failed to update data source: {ex}")
 
     # TAB 4: Edit Existing Records
     with tab4:
@@ -355,25 +404,51 @@ if st.session_state.authenticated and user_role == "Academy Coordinator":
                         submit_edit = st.form_submit_button("🔄 Update Record")
 
                         if submit_edit:
-                            df.at[idx, "Campus"] = edit_campus
-                            df.at[idx, "Teacher"] = edit_teacher
-                            df.at[idx, "Day"] = edit_day
-                            df.at[idx, "Start Time"] = edit_start
-                            df.at[idx, "End Time"] = edit_end
-                            df.at[idx, "Room"] = edit_room
-                            df.at[idx, "Instrument"] = edit_instrument
-                            df.at[idx, "Grade"] = edit_grade
-                            df.at[idx, "Notes"] = edit_notes
-                            df.at[idx, "Parent Name"] = edit_parent_name
-                            df.at[idx, "Parent Phone"] = edit_parent_phone
-                            df.at[idx, "Parent Email"] = edit_parent_email
+                            has_conflict, msg = check_room_conflict(df, edit_campus, edit_day, edit_room, edit_start, exclude_idx=idx)
+                            if has_conflict:
+                                st.error(f"⛔ ALTERAÇÃO BLOQUEADA: {msg}")
+                            else:
+                                df.at[idx, "Campus"] = edit_campus
+                                df.at[idx, "Teacher"] = edit_teacher
+                                df.at[idx, "Day"] = edit_day
+                                df.at[idx, "Start Time"] = edit_start
+                                df.at[idx, "End Time"] = edit_end
+                                df.at[idx, "Room"] = edit_room
+                                df.at[idx, "Instrument"] = edit_instrument
+                                df.at[idx, "Grade"] = edit_grade
+                                df.at[idx, "Notes"] = edit_notes
+                                df.at[idx, "Parent Name"] = edit_parent_name
+                                df.at[idx, "Parent Phone"] = edit_parent_phone
+                                df.at[idx, "Parent Email"] = edit_parent_email
 
-                            try:
-                                conn.update(worksheet="DATABASE", data=df)
-                                st.success(f"✅ Record for {selected_student} updated!")
-                                st.cache_data.clear()
-                            except Exception as ex:
-                                st.error(f"Failed to update data source: {ex}")
+                                try:
+                                    conn.update(worksheet="DATABASE", data=df)
+                                    st.success(f"✅ Record for {selected_student} updated!")
+                                    st.cache_data.clear()
+                                except Exception as ex:
+                                    st.error(f"Failed to update data source: {ex}")
+
+    # TAB 5: Delete / Cancel Booking
+    with tab5:
+        st.subheader("🗑️ Cancel / Remove Lesson Booking")
+        st.warning("⚠️ Esta ação irá remover permanentemente a aula selecionada.")
+        if not df.empty and "Student" in df.columns:
+            df["Booking_Label"] = df["Student"] + " | " + df["Instrument"] + " | " + df["Campus"] + " | " + df["Day"] + " (" + df["Start Time"] + ")"
+            booking_opts = df["Booking_Label"].tolist()
+            
+            selected_booking = st.selectbox("Selecione a Aula a Cancelar:", booking_opts)
+            
+            if st.button("🔴 Eliminar Aula Selecionada"):
+                delete_idx = df[df["Booking_Label"] == selected_booking].index
+                if not delete_idx.empty:
+                    updated_df = df.drop(delete_idx[0]).drop(columns=["Booking_Label"], errors="ignore")
+                    try:
+                        conn.update(worksheet="DATABASE", data=updated_df)
+                        st.success(f"✅ Aula cancelada e removida com sucesso!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Falha ao eliminar a aula: {ex}")
 
 # -----------------------------------------------------------------------------
 # 6. TIER 2: SCHOOL COORDINATOR PORTAL
@@ -389,10 +464,10 @@ elif st.session_state.authenticated and user_role == "School Coordinator":
             st.subheader(f"General Schedule — {selected_campus} Campus")
             days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
             for day in days:
-                d_df = campus_df[campus_df["Day"] == day]
+                d_df = campus_df[campus_df["Day"] == day].copy()
                 if not d_df.empty:
                     st.markdown(f"### 📅 {day.upper()}")
-                    d_df["Time"] = d_df["Start Time"] + " - " + d_df["End Time"]
+                    d_df["Time"] = d_df.apply(format_time_range, axis=1)
                     disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Room", "Teacher"]].copy()
                     disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Teacher"]
                     st.dataframe(disp_df, use_container_width=True, hide_index=True)
@@ -433,7 +508,7 @@ elif st.session_state.authenticated and user_role == "Academy Teacher":
 
                 t_tab1, t_tab2, t_tab3 = st.tabs(["📅 My Personal Schedule", "🏫 My Campus Schedule", "📞 My Students' Parent Contacts"])
 
-                # TAB 1: Horário Pessoal
+                # TAB 1: Horário Pessoal (Corrigido com Formatação de Horas)
                 with t_tab1:
                     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                     for day in days:
@@ -445,21 +520,21 @@ elif st.session_state.authenticated and user_role == "Academy Teacher":
                                 
                                 st.markdown(f"### 📘 {day.upper()} — {campus.upper()}")
                                 
-                                c_df["Time"] = c_df["Start Time"] + " - " + c_df["End Time"]
+                                c_df["Time"] = c_df.apply(format_time_range, axis=1)
                                 disp_df = c_df[["Time", "Student", "Grade", "Instrument", "Room"]].copy()
                                 disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room"]
                                 
                                 st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
-                # TAB 2: Horário Geral do Campus
+                # TAB 2: Horário Geral do Campus (Corrigido com Formatação de Horas)
                 with t_tab2:
                     st.subheader(f"General Schedule — {teacher_campus} Campus")
                     campus_df = df[df["Campus"] == teacher_campus]
                     for day in days:
-                        d_df = campus_df[campus_df["Day"] == day]
+                        d_df = campus_df[campus_df["Day"] == day].copy()
                         if not d_df.empty:
                             st.markdown(f"#### 📅 {day.upper()}")
-                            d_df["Time"] = d_df["Start Time"] + " - " + d_df["End Time"]
+                            d_df["Time"] = d_df.apply(format_time_range, axis=1)
                             disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Room", "Teacher"]].copy()
                             disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Teacher"]
                             st.dataframe(disp_df, use_container_width=True, hide_index=True)
