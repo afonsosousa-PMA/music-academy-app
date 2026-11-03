@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 
 st.set_page_config(
     page_title="Music Academy Portal",
@@ -8,40 +8,48 @@ st.set_page_config(
 )
 
 st.title("🎵 Music Academy Management Portal")
-st.write("Welcome to your custom administration dashboard.")
+st.write("Painel de gestão da Academia de Música.")
 
-# Conexão ao Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-st.sidebar.header("Navigation")
+# Menu Lateral
+st.sidebar.header("Navegação")
 menu_choice = st.sidebar.radio(
-    "Select View",
-    ["Master Data (DATABASE)", "Schedules", "Enrollments", "Parent Contacts", "Studio Availability"]
+    "Selecione a vista",
+    ["Dados Globais (DATABASE)", "Horários", "Inscrições", "Contactos dos Pais", "Salas"]
 )
 
 try:
-    # Lê os dados da aba DATABASE com atualização a cada 5 segundos
-    df = conn.read(worksheet="DATABASE", ttl=5)
+    # Obtém o link configurado nos Secrets
+    sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    
+    # Extrai o ID da folha de cálculo para ler a aba DATABASE diretamente
+    if "/d/" in sheet_url:
+        sheet_id = sheet_url.split("/d/")[1].split("/")[0]
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=DATABASE"
+    else:
+        csv_url = sheet_url
 
-    if menu_choice == "Master Data (DATABASE)":
+    # Carrega os dados da aba DATABASE
+    df = pd.read_csv(csv_url)
+
+    if menu_choice == "Dados Globais (DATABASE)":
         st.header("📊 Master Database View")
         st.dataframe(df, use_container_width=True)
 
-    elif menu_choice == "Schedules":
-        st.header("📅 Lesson & Teacher Schedules")
+    elif menu_choice == "Horários":
+        st.header("📅 Horários de Aulas e Professores")
         st.dataframe(df, use_container_width=True)
 
-    elif menu_choice == "Enrollments":
-        st.header("🎓 Student Registrations & Class Tracking")
+    elif menu_choice == "Inscrições":
+        st.header("🎓 Alunos e Inscrições")
         st.dataframe(df, use_container_width=True)
 
-    elif menu_choice == "Parent Contacts":
-        st.header("📞 Parent & Guardian Directory")
+    elif menu_choice == "Contactos dos Pais":
+        st.header("📞 Diretório de Contactos dos Encarregados de Educação")
         st.dataframe(df, use_container_width=True)
 
-    elif menu_choice == "Studio Availability":
-        st.header("🚪 Room & Studio Assignments")
+    elif menu_choice == "Salas":
+        st.header("🚪 Ocupação de Salas e Estúdios")
         st.dataframe(df, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Could not load data from 'DATABASE' worksheet. Please check permissions and link. Details: {e}")
+    st.error(f"Não foi possível carregar os dados. Verifique a ligação nos Secrets. Detalhes: {e}")
