@@ -18,7 +18,7 @@ menu_choice = st.sidebar.radio(
     "Select View",
     [
         "📊 Master Database View",
-        "➕ Add New Booking / Student",
+        "➕ Add New Student",
         "📞 Parent Contacts",
         "🚪 Studio Availability"
     ]
