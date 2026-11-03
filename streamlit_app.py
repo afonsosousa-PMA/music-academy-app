@@ -4,7 +4,7 @@ import re
 from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------------------------------------------------------
-# PAGE CONFIGURATION
+# CONFIGURAÇÃO DA PÁGINA
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Park Music Academy Management Portal",
@@ -15,15 +15,12 @@ st.set_page_config(
 st.title("🎵 PARK MUSIC ACADEMY — MANAGEMENT PORTAL")
 
 # -----------------------------------------------------------------------------
-# 1. DATA LAYER (Decoupled & Prepared for Standalone Migration)
+# 1. CAMADA DE DADOS
 # -----------------------------------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=5)
 def load_data():
-    """
-    Carrega dados brutos da aba principal DATABASE.
-    """
     try:
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         if "/d/" in sheet_url:
@@ -43,7 +40,6 @@ def load_data():
 
 df = load_data()
 
-# Garantir estrutura padrão de colunas
 expected_cols = [
     "Campus", "Teacher", "Day", "Start Time", "End Time", 
     "Student", "Grade", "Instrument", "Inst. Year", "Level", 
@@ -57,39 +53,24 @@ for col in expected_cols:
 valid_df = df[df["Student"] != ""].copy() if not df.empty and "Student" in df.columns else pd.DataFrame()
 
 # -----------------------------------------------------------------------------
-# 2. HELPER: LÓGICA DE AGRUPAMENTO DE GRADES
+# 2. AUXILIARES E CATEGORIZAÇÃO
 # -----------------------------------------------------------------------------
 def get_grade_category(grade_str):
-    """
-    Mapeia o valor individual da coluna Grade para uma das 3 categorias principais.
-    """
     if not grade_str:
         return "Other"
-    
     val = str(grade_str).upper().strip()
-    
-    # 1. Early Learning Check (3y, 4y, 5y, Early Learning)
     if any(k in val for k in ["EARLY", "3Y", "4Y", "5Y"]):
         return "Early Learning"
-    
-    # Extrair números da Grade (ex: "3B" -> 3, "10A" -> 10)
     numbers = re.findall(r'\d+', val)
     if numbers:
         grade_num = int(numbers[0])
-        # 2. Junior School (Grades 1 a 5)
         if 1 <= grade_num <= 5:
             return "Junior School"
-        # 3. Senior School (Grades 6 a 12)
         elif 6 <= grade_num <= 12:
             return "Senior School"
-            
     return "Other"
 
-# -----------------------------------------------------------------------------
-# 3. STANDALONE METRIC CALCULATIONS
-# -----------------------------------------------------------------------------
 def calculate_enrollments(data):
-    """Calcula inscrições agrupando por Aluno + Campus + Instrumento."""
     if data.empty:
         return 0
     if "Instrument" in data.columns and "Campus" in data.columns:
@@ -97,13 +78,12 @@ def calculate_enrollments(data):
     return len(data)
 
 def calculate_unique_students(data):
-    """Calcula alunos únicos (alunos com múltiplos instrumentos contam como 1)."""
     if data.empty or "Student" not in data.columns:
         return 0
     return data["Student"].nunique()
 
 # -----------------------------------------------------------------------------
-# 4. AUTHENTICATION & ROLE-BASED ACCESS (Sidebar)
+# 3. AUTENTICAÇÃO E BARRA LATERAL
 # -----------------------------------------------------------------------------
 st.sidebar.title("🔐 Portal Login")
 
@@ -116,28 +96,22 @@ user_email = st.sidebar.text_input("Enter School Email", value="").strip().lower
 st.sidebar.markdown("---")
 
 # -----------------------------------------------------------------------------
-# 5. TIER 1: ACADEMY COORDINATOR (Full Management Access)
+# 4. TIER 1: ACADEMY COORDINATOR PORTAL
 # -----------------------------------------------------------------------------
 if user_role == "Academy Coordinator":
     st.header("🏛️ Academy Coordinator Portal")
 
-    # Executive Overview Dashboard
+    # Executive Dashboard
     st.subheader("📊 EXECUTIVE DASHBOARD")
-    
     t1, t2, t3, t4 = st.columns(4)
-    total_lessons = len(valid_df)
-    total_teachers = valid_df["Teacher"].replace("", None).nunique() if not valid_df.empty else 0
-    total_rooms = valid_df["Room"].replace("", None).nunique() if not valid_df.empty else 0
-    total_unique_students = calculate_unique_students(valid_df)
-
-    t1.metric("Total Lessons", total_lessons)
-    t2.metric("Total Teachers", total_teachers)
-    t3.metric("Total Rooms", total_rooms)
-    t4.metric("Total Unique Students", total_unique_students)
+    t1.metric("Total Lessons", len(valid_df))
+    t2.metric("Total Teachers", valid_df["Teacher"].replace("", None).nunique() if not valid_df.empty else 0)
+    t3.metric("Total Rooms", valid_df["Room"].replace("", None).nunique() if not valid_df.empty else 0)
+    t4.metric("Total Unique Students", calculate_unique_students(valid_df))
 
     st.markdown("---")
 
-    # Campus Breakdown Cards
+    # Campus Breakdown
     st.subheader("📍 Campus Enrollments & Unique Students Breakdown")
     c_alfragide, c_pde, c_restelo = st.columns(3)
 
@@ -160,14 +134,12 @@ if user_role == "Academy Coordinator":
         st.metric("Unique Students", calculate_unique_students(df_restelo))
 
     st.markdown("---")
-
     sum1, sum2 = st.columns(2)
     sum1.metric("📌 TOTAL ENROLLMENTS (All Campuses)", calculate_enrollments(valid_df))
-    sum2.metric("👤 TOTAL UNIQUE STUDENTS (All Campuses)", total_unique_students)
+    sum2.metric("👤 TOTAL UNIQUE STUDENTS (All Campuses)", calculate_unique_students(valid_df))
 
     st.markdown("---")
 
-    # Management Tabs
     tab1, tab2, tab3, tab4 = st.tabs([
         "📅 General Schedule & Filters", 
         "📞 Parent Contact Directory", 
@@ -175,56 +147,63 @@ if user_role == "Academy Coordinator":
         "✏️ Edit / Update Existing Records"
     ])
 
-    # TAB 1: General Schedule View com Filtros Personalizados
+    # TAB 1: General Schedule View
     with tab1:
         st.subheader("Master Schedule Overview")
         if not df.empty:
             f_col1, f_col2, f_col3, f_col4 = st.columns(4)
-
             with f_col1:
                 campus_opts = ["All Campuses"] + sorted([c for c in df["Campus"].unique() if c])
                 campus_filter = st.selectbox("Campus Filter:", campus_opts)
-
             with f_col2:
                 teacher_opts = ["All Teachers"] + sorted([t for t in df["Teacher"].unique() if t])
                 teacher_filter = st.selectbox("Teacher Filter:", teacher_opts)
-
             with f_col3:
                 day_opts = ["All Days", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
                 day_filter = st.selectbox("Day Filter:", day_opts)
-
             with f_col4:
-                # Apenas as 3 categorias solicitadas + opção All
                 grade_opts = ["All Grades", "Early Learning", "Junior School", "Senior School"]
                 grade_filter = st.selectbox("Grade Filter:", grade_opts)
 
-            # Aplicação dinâmica dos filtros
             filtered_df = df.copy()
-
             if campus_filter != "All Campuses":
                 filtered_df = filtered_df[filtered_df["Campus"] == campus_filter]
-
             if teacher_filter != "All Teachers":
                 filtered_df = filtered_df[filtered_df["Teacher"] == teacher_filter]
-
             if day_filter != "All Days":
                 filtered_df = filtered_df[filtered_df["Day"] == day_filter]
-
             if grade_filter != "All Grades":
-                filtered_df = filtered_df[
-                    filtered_df["Grade"].apply(get_grade_category) == grade_filter
-                ]
+                filtered_df = filtered_df[filtered_df["Grade"].apply(get_grade_category) == grade_filter]
 
-            st.dataframe(filtered_df, use_container_width=True)
+            # Apresentação formatada por blocos de professores e dias
+            if not filtered_df.empty:
+                teachers_in_view = filtered_df["Teacher"].unique()
+                for teacher in teachers_in_view:
+                    if not teacher:
+                        continue
+                    st.markdown(f"### 👨‍🏫 {teacher}")
+                    t_df = filtered_df[filtered_df["Teacher"] == teacher]
+                    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                    
+                    for day in days:
+                        d_df = t_df[t_df["Day"] == day]
+                        if not d_df.empty:
+                            st.markdown(f"#### 📅 {day.upper()}")
+                            d_df["Time"] = d_df["Start Time"] + " - " + d_df["End Time"]
+                            disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Inst. Year", "Level", "Room", "Campus"]].copy()
+                            disp_df.columns = ["Time", "Student", "Class", "Instrument", "Inst. Year", "Level", "Room", "Campus"]
+                            st.dataframe(disp_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No lessons found matching the selected filters.")
         else:
-            st.info("Nenhum dado de horário carregado.")
+            st.info("No schedule data loaded.")
 
     # TAB 2: Parent Contacts
     with tab2:
         st.subheader("Parent & Guardian Directory")
-        contact_cols = [c for c in ["Student", "Grade", "Campus", "Parent Name", "Parent Phone", "Parent Email"] if c in df.columns]
+        contact_cols = [c for c in ["Student", "Grade", "Campus", "Parent Name", "Parent Email", "Parent Phone"] if c in df.columns]
         if contact_cols:
-            st.dataframe(df[contact_cols], use_container_width=True)
+            st.dataframe(df[contact_cols], use_container_width=True, hide_index=True)
 
     # TAB 3: Add New Records
     with tab3:
@@ -329,7 +308,7 @@ if user_role == "Academy Coordinator":
                                 st.error(f"Failed to update data source: {ex}")
 
 # -----------------------------------------------------------------------------
-# 6. TIER 2: SCHOOL COORDINATOR PORTAL
+# 5. TIER 2: SCHOOL COORDINATOR PORTAL
 # -----------------------------------------------------------------------------
 elif user_role == "School Coordinator":
     st.header("🏫 School Coordinator Portal")
@@ -340,11 +319,18 @@ elif user_role == "School Coordinator":
             campus_df = df[df["Campus"] == selected_campus]
 
             st.subheader(f"General Schedule — {selected_campus} Campus")
-            disp_cols = [c for c in ["Day", "Start Time", "End Time", "Room", "Student", "Grade", "Instrument", "Teacher"] if c in campus_df.columns]
-            st.dataframe(campus_df[disp_cols], use_container_width=True)
+            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            for day in days:
+                d_df = campus_df[campus_df["Day"] == day]
+                if not d_df.empty:
+                    st.markdown(f"### 📅 {day.upper()}")
+                    d_df["Time"] = d_df["Start Time"] + " - " + d_df["End Time"]
+                    disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Room", "Teacher"]].copy()
+                    disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Teacher"]
+                    st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
 # -----------------------------------------------------------------------------
-# 7. TIER 3: ACADEMY TEACHER PORTAL
+# 6. TIER 3: ACADEMY TEACHER PORTAL (Formatação idêntica ao modelo de Excel)
 # -----------------------------------------------------------------------------
 elif user_role == "Academy Teacher":
     st.header("👨‍🏫 Teacher Portal")
@@ -353,33 +339,68 @@ elif user_role == "Academy Teacher":
         st.info("Please enter your registered school email address in the sidebar to load your personalized schedule.")
     else:
         if not df.empty and "Teacher" in df.columns:
-            teacher_df = df[
-                (df["Teacher Email"].str.lower() == user_email) | 
-                (df["Teacher"].str.lower().apply(lambda x: x.replace(" ", ".")) in user_email)
-            ]
+            def match_teacher(row, input_email):
+                t_name = str(row.get("Teacher", "")).strip().lower()
+                t_email = str(row.get("Teacher Email", "")).strip().lower()
+                
+                if t_email and t_email == input_email:
+                    return True
+                
+                t_handle = t_name.replace(" ", ".")
+                input_username = input_email.split("@")[0]
+                
+                if t_handle and (t_handle in input_username or input_username in t_handle):
+                    return True
+                return False
+
+            teacher_df = df[df.apply(lambda r: match_teacher(r, user_email), axis=1)]
 
             if teacher_df.empty:
-                st.warning(f"No records found matching email '{user_email}'. Please verify your login email or contact your Academy Coordinator.")
+                st.warning(f"No records found matching email '{user_email}'. Please verify your email entry or contact your Academy Coordinator.")
             else:
                 teacher_name = teacher_df["Teacher"].iloc[0]
                 teacher_campus = teacher_df["Campus"].iloc[0] if "Campus" in teacher_df.columns else "Main"
 
-                st.success(f"Welcome back, **{teacher_name}**!")
+                st.subheader(f"👨‍🏫 {teacher_name.upper()}")
 
                 t_tab1, t_tab2, t_tab3 = st.tabs(["📅 My Personal Schedule", "🏫 My Campus Schedule", "📞 My Students' Parent Contacts"])
 
+                # TAB 1: Horário Pessoal Formatado por Dia e Campus (Estilo Excel)
                 with t_tab1:
-                    st.subheader(f"Personal Timetable — {teacher_name}")
-                    p_cols = [c for c in ["Day", "Start Time", "End Time", "Campus", "Room", "Student", "Grade", "Instrument"] if c in teacher_df.columns]
-                    st.dataframe(teacher_df[p_cols], use_container_width=True)
+                    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                    for day in days:
+                        day_df = teacher_df[teacher_df["Day"] == day]
+                        if not day_df.empty:
+                            campuses = day_df["Campus"].unique()
+                            for campus in campuses:
+                                c_df = day_df[day_df["Campus"] == campus].copy()
+                                
+                                # Bloco Visual Estilo Excel (ex: WEDNESDAY - ALFRAGIDE)
+                                st.markdown(f"### 📘 {day.upper()} — {campus.upper()}")
+                                
+                                c_df["Time"] = c_df["Start Time"] + " - " + c_df["End Time"]
+                                # Colunas com Parents Email seguido de Parents Phone
+                                disp_df = c_df[["Time", "Student", "Grade", "Instrument", "Room", "Parent Email", "Parent Phone"]].copy()
+                                disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Parents Email", "Parents Phone"]
+                                
+                                st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
+                # TAB 2: Horário Geral do Campus
                 with t_tab2:
-                    st.subheader(f"Campus Schedule — {teacher_campus}")
+                    st.subheader(f"General Schedule — {teacher_campus} Campus")
                     campus_df = df[df["Campus"] == teacher_campus]
-                    c_cols = [c for c in ["Day", "Start Time", "End Time", "Room", "Student", "Instrument", "Teacher"] if c in campus_df.columns]
-                    st.dataframe(campus_df[c_cols], use_container_width=True)
+                    for day in days:
+                        d_df = campus_df[campus_df["Day"] == day]
+                        if not d_df.empty:
+                            st.markdown(f"#### 📅 {day.upper()}")
+                            d_df["Time"] = d_df["Start Time"] + " - " + d_df["End Time"]
+                            disp_df = d_df[["Time", "Student", "Grade", "Instrument", "Room", "Teacher"]].copy()
+                            disp_df.columns = ["Time", "Student", "Class", "Instrument", "Room", "Teacher"]
+                            st.dataframe(disp_df, use_container_width=True, hide_index=True)
 
+                # TAB 3: Contactos dos Pais dos Alunos do Professor
                 with t_tab3:
                     st.subheader("Assigned Student Parent Contacts")
-                    cont_cols = [c for c in ["Student", "Grade", "Instrument", "Parent Name", "Parent Phone", "Parent Email"] if c in teacher_df.columns]
-                    st.dataframe(teacher_df[cont_cols], use_container_width=True)
+                    cont_df = teacher_df[["Student", "Grade", "Instrument", "Parent Name", "Parent Email", "Parent Phone"]].copy()
+                    cont_df.columns = ["Student", "Class", "Instrument", "Parent Name", "Parent Email", "Parent Phone"]
+                    st.dataframe(cont_df, use_container_width=True, hide_index=True)
